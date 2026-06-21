@@ -1,0 +1,36 @@
+[package]
+  cjc-version = "1.1.3"
+  name = "trade"
+  organization = ""
+  description = "nothing here"
+  version = "1.0.0"
+  target-dir = ""
+  script-dir = ""
+  output-type = "executable"
+  compile-option = ""
+  override-compile-option = ""
+  link-option = ""
+  package-configuration = {}
+
+[dependencies]
+
+[target.x86_64-w64-mingw32]
+  compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated -lcrypt32"
+  [target.x86_64-w64-mingw32.bin-dependencies]
+    path-option = [ "${CANGJIE_STDX_PATH}" ]
+
+[target.x86_64-unknown-linux-gnu]
+  compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated -ldl"
+  [target.x86_64-unknown-linux-gnu.bin-dependencies]
+    path-option = [ "${CANGJIE_STDX_PATH}" ]
+
+[target.aarch64-unknown-linux-gnu]
+  compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated -ldl"
+  [target.aarch64-unknown-linux-gnu.bin-dependencies]
+    path-option = [ "${CANGJIE_STDX_PATH}" ]
+
+[target.aarch64-apple-darwin]
+  compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated"
+  link-option = "-headerpad_max_install_names -lcangjie-dynamicLoader-opensslFFI -lstdx.net.tlsFFI -lstdx.net.tls"
+  [target.aarch64-apple-darwin.bin-dependencies]
+    path-option = [ "${CANGJIE_STDX_PATH}" ]
