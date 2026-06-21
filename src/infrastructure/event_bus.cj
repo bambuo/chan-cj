@@ -1,13 +1,14 @@
-package trade
+package trade.infrastructure
 
 import std.collection.*
 import std.sync.*
+import trade.domain.*
 
 // ──────────────────────────────────────────────
-// EventBus — thread-safe pub/sub event system
+// Infrastructure — InMemoryEventBus 内存事件总线
 // ──────────────────────────────────────────────
 
-public class EventBus {
+public class InMemoryEventBus {
     private let handlers: HashMap<EventType, ArrayList<(Event) -> Unit>>
     private let mutex: Mutex
 

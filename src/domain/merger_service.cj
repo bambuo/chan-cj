@@ -1,43 +1,28 @@
-package trade
+package trade.domain
 
 import std.collection.*
 
 // ──────────────────────────────────────────────
-// KlineMerger — 缠论 K 线包含处理
+// Domain Service — 缠论 K 线包含处理
 // ──────────────────────────────────────────────
 
-public class KlineMerger {
+public class MergerService {
     private let merged: ArrayList<ChanKline>
-    private let eventBus: EventBus
 
-    public init(eventBus: EventBus) {
+    public init() {
         this.merged = ArrayList<ChanKline>()
-        this.eventBus = eventBus
-        this.eventBus.subscribe(EventType.KlineClosed, { e => this.onKlineClosed(e) })
     }
 
+    /// 获取当前合并序列的不可变快照
     public func getMergedKlines(): ArrayList<ChanKline> {
         let copy = ArrayList<ChanKline>()
         for (ck in merged) { copy.add(ck) }
         return copy
     }
 
-    private func onKlineClosed(event: Event): Unit {
-        let klineOpt = event.data as Kline
-        match (klineOpt) {
-            case Some(kline) =>
-                if (kline.isClosed) {
-                    processKline(kline)
-                }
-            case None =>
-                eventBus.publish(Event(EventType.ErrorEvent,
-                    "KlineMerger: failed to cast event data to Kline"))
-        }
-    }
-
-    private func processKline(kline: Kline): Unit {
+    /// 处理一条新 K 线：追加 → 循环包含处理
+    public func processKline(kline: Kline): Unit {
         let ck = ChanKline(kline.openTime, kline.high, kline.low)
-
         merged.add(ck)
 
         var done = false
@@ -56,8 +41,6 @@ public class KlineMerger {
                 merged.add(mergedCk)
             }
         }
-
-        eventBus.publish(Event(EventType.MergeProcessed, true))
     }
 
     private func isContained(a: ChanKline, b: ChanKline): Bool {

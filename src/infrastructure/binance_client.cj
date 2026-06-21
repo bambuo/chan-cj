@@ -1,4 +1,4 @@
-package trade
+package trade.infrastructure
 
 import std.collection.*
 import std.sync.*
@@ -8,14 +8,15 @@ import stdx.encoding.json.*
 import stdx.crypto.kit.*
 import stdx.net.tls.common.*
 import stdx.net.tls.TlsClientConfig
+import trade.domain.*
 
 // ──────────────────────────────────────────────
-// BinanceWSClient — 对接币安实时 K 线
+// Infrastructure — Binance WebSocket 客户端
 // ──────────────────────────────────────────────
 
-public class BinanceWSClient {
+public class BinanceClient {
     private let wsUrl: String = "wss://stream.binance.com:9443/ws"
-    private let eventBus: EventBus
+    private let eventBus: InMemoryEventBus
     private let symbols: ArrayList<String>
     private var interval: String
     private var httpClient: Client
@@ -23,7 +24,7 @@ public class BinanceWSClient {
     private var readerThread: ?Future<Unit>
     private var running: AtomicBool
 
-    public init(eventBus: EventBus) {
+    public init(eventBus: InMemoryEventBus) {
         this.eventBus = eventBus
         this.symbols = ArrayList<String>()
         this.interval = "1m"
@@ -146,13 +147,13 @@ public class BinanceWSClient {
         return data
     }
 
-    // ── Internal: JSON processing ──
+    // ── Internal: JSON processing → publish domain events ──
 
     private func processMessage(msg: String): Unit {
         try {
             let jv = JsonValue.fromStr(msg)
             let obj = jv.asObject()
-            if (!obj.containsKey("e")) { return }  // skip non-kline messages (e.g. subscription confirmation)
+            if (!obj.containsKey("e")) { return }
             let eventTypeField = obj["e"].asString().getValue()
             if (eventTypeField != "kline") { return }
 
