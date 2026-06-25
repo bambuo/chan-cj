@@ -17,6 +17,10 @@ public class SegmentProcessor {
     private let segments: RingBuffer<AlgoSegment>   // 最多 1 段：最后一段
     private var currentDir: ChanDirection
     private var segmentStart: Int64
+    private var segmentStartTime: Int64                // 当前线段的开始时间
+    private var segmentEndTime: Int64                  // 当前线段的最新结束时间
+    private var segmentStartPrice: Float64             // 当前线段的起始价格
+    private var segmentEndPrice: Float64               // 当前线段的最新结束价格
     private let procSeq: ArrayList<FeatureK>          // 特征序列，线段结束时清空
     private var pendingIdx: Int64
     private let allStrokes: RingBuffer<AlgoStroke>    // 最近 200 笔用于 pendig 检测
@@ -26,6 +30,10 @@ public class SegmentProcessor {
         this.segments = RingBuffer<AlgoSegment>(1)
         this.currentDir = ChanDirection.Up
         this.segmentStart = 0
+        this.segmentStartTime = 0
+        this.segmentEndTime = 0
+        this.segmentStartPrice = 0.0
+        this.segmentEndPrice = 0.0
         this.procSeq = ArrayList<FeatureK>()
         this.pendingIdx = -1
         this.allStrokes = RingBuffer<AlgoStroke>(200)
@@ -42,6 +50,14 @@ public class SegmentProcessor {
     }
 
     private func processStroke(s: AlgoStroke, result: ArrayList<AlgoSegment>): Unit {
+        // 跟踪线段起止时间和价格
+        if (segmentStartTime == 0) {
+            segmentStartTime = s.start.time
+            segmentStartPrice = s.startPrice
+        }
+        segmentEndTime = s.end.time
+        segmentEndPrice = s.endPrice
+
         // 首笔决定方向
         if (!hasInitialized) {
             match (s.direction) {
@@ -70,6 +86,8 @@ public class SegmentProcessor {
     }
     public func reset(): Unit {
         segments.clear(); currentDir = ChanDirection.Up; segmentStart = 0
+        segmentStartTime = 0; segmentEndTime = 0
+        segmentStartPrice = 0.0; segmentEndPrice = 0.0
         procSeq.clear(); pendingIdx = -1; allStrokes.clear(); hasInitialized = false
     }
 
@@ -149,9 +167,13 @@ public class SegmentProcessor {
 
     private func closeSegment(endIdx: Int64): ?AlgoSegment {
         if (segmentStart > endIdx) { return None }
-        let seg = AlgoSegment(currentDir, ArrayList<AlgoStroke>(), segmentStart, endIdx, 0.0, 0.0)
+        let seg = AlgoSegment(currentDir, ArrayList<AlgoStroke>(),
+            segmentStart, endIdx, segmentStartTime, segmentEndTime,
+            segmentStartPrice, segmentEndPrice, 0.0, 0.0)
         segments.add(seg)
         segmentStart = endIdx + 1
+        segmentStartTime = 0
+        segmentStartPrice = 0.0  // 重置，由下一段首笔重新设定
         currentDir = match (currentDir) { case ChanDirection.Up => ChanDirection.Down case ChanDirection.Down => ChanDirection.Up }
         procSeq.clear()
         Some(seg)

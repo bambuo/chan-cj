@@ -44,6 +44,10 @@ public class PivotZoneProcessor {
             let zd = if (s1.low > s2.low) { if (s1.low > s3.low) { s1.low } else { s3.low } } else { if (s2.low > s3.low) { s2.low } else { s3.low } }
             if (zg > zd) {
                 let z = AlgoPivotZone(zg, zd, i, i + 2, s2.direction, false)
+	                z.startTime = s1.start.time
+	                z.endTime = s3.end.time
+                z.startPrice = s1.startPrice
+                z.endPrice = s3.endPrice
                 var ei = i + 3
                 while (ei < all.size && all[ei].high >= zd && all[ei].low <= zg) { z.endIndex = ei; ei++ }
                 if (ei < all.size) { let r = all[ei]; if (!(r.high >= zd && r.low <= zg)) { z.completed = true } }
@@ -77,6 +81,10 @@ public class PivotZoneProcessor {
             let zd = if (s1.low > s2.low) { if (s1.low > s3.low) { s1.low } else { s3.low } } else { if (s2.low > s3.low) { s2.low } else { s3.low } }
             if (zg > zd) {
                 let z = AlgoPivotZone(zg, zd, i, i + 2, s2.direction, false)
+                z.startTime = s1.startTime
+                z.endTime = s3.endTime
+                z.startPrice = s1.startPrice
+                z.endPrice = s3.endPrice
                 var ei = i + 3
                 while (ei < all.size && all[ei].high >= zd && all[ei].low <= zg) { z.endIndex = ei; ei++ }
                 if (ei < all.size) { let r = all[ei]; if (!(r.high >= zd && r.low <= zg)) { z.completed = true } }

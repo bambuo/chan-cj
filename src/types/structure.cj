@@ -163,15 +163,26 @@ public struct AlgoSegment {
     public let strokes: ArrayList<AlgoStroke>
     public let startIndex: Int64
     public let endIndex: Int64
+    public let startTime: Int64
+    public let endTime: Int64
+    public let startPrice: Float64
+    public let endPrice: Float64
     public let high: Float64
     public let low: Float64
 
     public init(direction: ChanDirection, strokes: ArrayList<AlgoStroke>,
-                startIndex: Int64, endIndex: Int64, high: Float64, low: Float64) {
+                startIndex: Int64, endIndex: Int64,
+                startTime: Int64, endTime: Int64,
+                startPrice: Float64, endPrice: Float64,
+                high: Float64, low: Float64) {
         this.direction = direction
         this.strokes = strokes
         this.startIndex = startIndex
         this.endIndex = endIndex
+        this.startTime = startTime
+        this.endTime = endTime
+        this.startPrice = startPrice
+        this.endPrice = endPrice
         this.high = high
         this.low = low
     }
@@ -216,6 +227,10 @@ public class AlgoPivotZone {
     public var endIndex: Int64
     public let direction: ChanDirection
     public var completed: Bool
+    public var startTime: Int64
+    public var endTime: Int64
+    public var startPrice: Float64
+    public var endPrice: Float64
 
     public init(zg: Float64, zd: Float64, startIndex: Int64, endIndex: Int64,
                 direction: ChanDirection, completed: Bool) {
@@ -225,6 +240,10 @@ public class AlgoPivotZone {
         this.endIndex = endIndex
         this.direction = direction
         this.completed = completed
+        this.startTime = 0
+        this.endTime = 0
+        this.startPrice = 0.0
+        this.endPrice = 0.0
     }
 }
 

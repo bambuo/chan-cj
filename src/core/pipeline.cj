@@ -77,7 +77,7 @@ public class Pipeline {
         let merged = state.contain.process(kline)
         match (merged) {
             case Some(ck) =>
-                pipe.push("chan_kline", RedisEntry(Float64(ck.time), "${ck.high},${ck.low}"))
+                pipe.push("chan_kline", RedisEntry(Float64(ck.time), ChanKlineRecord(ck.time, ck.high, ck.low).toJson()))
                 hasChange = true
             case None => ()
         }
@@ -90,7 +90,7 @@ public class Pipeline {
                 case FractalType.Top => "top"
                 case FractalType.Bottom => "bottom"
             }
-            pipe.push("fractal", RedisEntry(Float64(f.kline.time), "${ftype},${f.kline.high},${f.kline.low},${f.index}"))
+                pipe.push("fractal", RedisEntry(Float64(f.kline.time), FractalRecord(f.kline.time, ftype, f.kline.high, f.kline.low, f.index).toJson()))
             hasChange = true
         }
 
@@ -102,7 +102,7 @@ public class Pipeline {
             let ns = state.stroke.process(f, lk, false)
             for (s in ns) {
                 let dir = match (s.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
-                pipe.push("stroke", RedisEntry(Float64(s.endIndex), "${dir},${s.startIndex},${s.endIndex},${s.startPrice},${s.endPrice},${s.high},${s.low}"))
+                pipe.push("stroke", RedisEntry(Float64(kline.openTime), StrokeRecord(kline.openTime, s.start.time, s.end.time, dir, s.startIndex, s.endIndex, s.startPrice, s.endPrice, s.high, s.low).toJson()))
                 newStrokes.add(s)
                 hasChange = true
             }
@@ -116,7 +116,7 @@ public class Pipeline {
             newSegments = state.segment.process(newStrokes)
             for (seg in newSegments) {
                 let dir = match (seg.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
-                pipe.push("segment", RedisEntry(Float64(seg.endIndex), "${dir},${seg.startIndex},${seg.endIndex}"))
+                pipe.push("segment", RedisEntry(Float64(kline.openTime), SegmentRecord(kline.openTime, seg.startTime, seg.endTime, seg.startPrice, seg.endPrice, dir, seg.startIndex, seg.endIndex).toJson()))
                 hasChange = true
             }
 
@@ -124,7 +124,7 @@ public class Pipeline {
             newPivotZones = state.pivotZone.process(newStrokes)
             for (z in newPivotZones) {
                 let dir = match (z.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
-                pipe.push("pivot_zone", RedisEntry(Float64(z.endIndex), "${z.zg},${z.zd},${z.startIndex},${z.endIndex},${dir},${z.completed}"))
+                pipe.push("pivot_zone", RedisEntry(Float64(kline.openTime), PivotZoneRecord(kline.openTime, z.startTime, z.endTime, z.startPrice, z.endPrice, z.zg, z.zd, z.startIndex, z.endIndex, dir, z.completed).toJson()))
                 hasChange = true
             }
 
@@ -132,7 +132,11 @@ public class Pipeline {
             newTrendPatterns = state.trendPattern.process(newPivotZones)
             for (tp in newTrendPatterns) {
                 let tpDir = match (tp.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
-                pipe.push("trend_pattern", RedisEntry(Float64(0), "${tpDir},${tp.completed},${tp.zones.size}"))
+                let tStartTime = if (tp.zones.size > 0) { tp.zones[0].startTime } else { 0 }
+                let tEndTime = if (tp.zones.size > 0) { tp.zones[tp.zones.size - 1].endTime } else { 0 }
+                let tStartPrice = if (tp.zones.size > 0) { tp.zones[0].startPrice } else { 0.0 }
+                let tEndPrice = if (tp.zones.size > 0) { tp.zones[tp.zones.size - 1].endPrice } else { 0.0 }
+                pipe.push("trend_pattern", RedisEntry(Float64(kline.openTime), TrendPatternRecord(kline.openTime, tStartTime, tEndTime, tStartPrice, tEndPrice, tpDir, tp.completed, tp.zones.size).toJson()))
                 hasChange = true
             }
         }
@@ -151,7 +155,7 @@ public class Pipeline {
         }
         let newDivergences = state.divergence.process(symbol, entryPrice, lastDir, lastCompleted)
         for (d in newDivergences) {
-            pipe.push("divergence", RedisEntry(Float64(0), "${d.divergenceType},${d.ratio},${d.confirmed}"))
+            pipe.push("divergence", RedisEntry(Float64(kline.openTime), DivergenceRecord(kline.openTime, kline.close, d.divergenceType, d.ratio, d.confirmed).toJson()))
             hasChange = true
         }
 
@@ -176,7 +180,7 @@ public class Pipeline {
                 case _ => ""
             }
             if (signalType != "") {
-                pipe.push("signal", RedisEntry(Float64(kline.closeTime), "${signalType},${kline.close},0.8"))
+                pipe.push("signal", RedisEntry(Float64(kline.openTime), SignalRecord(kline.openTime, signalType, kline.close, 0.8).toJson()))
                 hasChange = true
                 state.hasFirstSignal = true
             }
@@ -187,24 +191,27 @@ public class Pipeline {
             for (z in newPivotZones) {
                 if (z.completed) {
                     let signalType = match (z.direction) {
-                        case ChanDirection.Up => "Buy3"
-                        case ChanDirection.Down => "Sell3"
+                        case ChanDirection.Down => "Buy3"
+                        case ChanDirection.Up => "Sell3"
                     }
-                    pipe.push("signal", RedisEntry(Float64(kline.closeTime), "${signalType},${kline.close},0.7"))
+                    pipe.push("signal", RedisEntry(Float64(kline.openTime), SignalRecord(kline.openTime, signalType, kline.close, 0.7).toJson()))
                     hasChange = true
                 }
             }
         }
 
         // 第二类买卖点（已有第一类后的回调方向）
-        if (state.hasFirstSignal && newTrendPatterns.size > 0) {
-            let lastTP = newTrendPatterns[newTrendPatterns.size - 1]
-            let signalType = match (lastTP.direction) {
-                case ChanDirection.Up => "Buy2"
-                case ChanDirection.Down => "Sell2"
+        if (state.hasFirstSignal) {
+            let patterns = state.trendPattern.getPatterns()
+            if (patterns.size > 0) {
+                let lastTP = patterns[patterns.size - 1]
+                let signalType = match (lastTP.direction) {
+                    case ChanDirection.Up => "Buy2"
+                    case ChanDirection.Down => "Sell2"
+                }
+                pipe.push("signal", RedisEntry(Float64(kline.openTime), SignalRecord(kline.openTime, signalType, kline.close, 0.6).toJson()))
+                hasChange = true
             }
-            pipe.push("signal", RedisEntry(Float64(kline.closeTime), "${signalType},${kline.close},0.6"))
-            hasChange = true
         }
 
         // 检查完成趋势——用于级别升级
@@ -221,6 +228,6 @@ public class Pipeline {
             }
         }
 
-        ProcessResult(symbol, hasCompletedTrend, trendDir, trendHigh, trendLow, hasChange)
+        ProcessResult(symbol, kline.openTime, hasCompletedTrend, trendDir, trendHigh, trendLow, hasChange)
     }
 }

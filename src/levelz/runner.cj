@@ -110,7 +110,7 @@ public class LevelRunner {
         let h = if (result.trendHigh > result.trendLow) { result.trendHigh } else { result.trendLow }
         let l = if (result.trendLow < result.trendHigh) { result.trendLow } else { result.trendHigh }
         Kline(
-            0, 0,
+            result.time, result.time,
             result.symbol, "trend",
             h, h, l, l,
             0.0, true
