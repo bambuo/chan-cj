@@ -5,7 +5,7 @@ import trade.types.*
 
 // ──────────────────────────────────────────────
 // 包含处理（流式）
-// 维护末尾最少元素用于下次包含判定
+// RingBuffer 固定容量 3，自动淘汰最旧
 // ──────────────────────────────────────────────
 
 /// 带全局索引的合并元素
@@ -20,29 +20,45 @@ private struct IndexedKline {
 }
 
 public class ContainProcessor {
-    private let tail: ArrayList<IndexedKline>
+    private let tail: RingBuffer<IndexedKline>   // 容量 3，自动淘汰
     private var trend: ChanTrend
     private var counter: Int64
 
     public init() {
-        this.tail = ArrayList<IndexedKline>()
+        this.tail = RingBuffer<IndexedKline>(3)
         this.trend = ChanTrend.Up
         this.counter = 0
     }
 
     public func process(kline: Kline): ?ChanKline {
         let idx = counter; counter++
-        tail.add(IndexedKline(ChanKline(kline.openTime, kline.high, kline.low), idx))
-        resolveContainment()
-        if (tail.size > 0) { Some(tail[tail.size - 1].kline) } else { None }
+        // 转为临时 ArrayList 做包含合并
+        let list = tail.toArrayList()
+        list.add(IndexedKline(ChanKline(kline.openTime, kline.high, kline.low), idx))
+        resolveContainment(list)
+
+        // 写回 RingBuffer（保留最后 3 个）
+        tail.clear()
+        let start = if (list.size > 3) { list.size - 3 } else { 0 }
+        for (i in start .. list.size) {
+            tail.add(list[i])
+        }
+
+        if (tail.size() > 0) {
+            match (tail.last()) {
+                case Some(ik) => Some(ik.kline)
+                case None => None
+            }
+        } else { None }
     }
 
     /// 获取最后 N 个元素及其在全局序列中的起始偏移
     public func getLastWithOffset(n: Int64): (ArrayList<ChanKline>, Int64) {
+        let list = tail.toArrayList()
         let result = ArrayList<ChanKline>()
-        let start = if (tail.size > n) { tail.size - n } else { 0 }
-        let offset = if (tail.size > 0) { tail[start].index } else { 0 }
-        for (i in start .. tail.size) { result.add(tail[i].kline) }
+        let start = if (list.size > n) { list.size - n } else { 0 }
+        let offset = if (list.size > 0) { list[start].index } else { 0 }
+        for (i in start .. list.size) { result.add(list[i].kline) }
         (result, offset)
     }
 
@@ -53,46 +69,42 @@ public class ContainProcessor {
     }
 
     public func getLatest(): ?ChanKline {
-        if (tail.size > 0) { Some(tail[tail.size - 1].kline) } else { None }
-    }
-
-    public func trim(): Unit {
-        if (tail.size > 3) {
-            let keep = ArrayList<IndexedKline>()
-            for (i in tail.size - 3 .. tail.size) { keep.add(tail[i]) }
-            tail.clear()
-            for (e in keep) { tail.add(e) }
+        match (tail.last()) {
+            case Some(ik) => Some(ik.kline)
+            case None => None
         }
     }
 
     public func reset(): Unit {
         tail.clear()
         trend = ChanTrend.Up
+        counter = 0
     }
 
-    private func resolveContainment(): Unit {
+    // ── 内部 ──
+
+    private func resolveContainment(list: ArrayList<IndexedKline>): Unit {
         var done = false
-        while (!done && tail.size >= 2) {
-            let a = tail[tail.size - 2].kline
-            let b = tail[tail.size - 1].kline
+        while (!done && list.size >= 2) {
+            let a = list[list.size - 2].kline
+            let b = list[list.size - 1].kline
             if (!(a >= b || b >= a)) { done = true } else {
-                trend = determineTrend(tail.size - 2)
+                trend = determineTrend(list, list.size - 2)
                 let merged = match (trend) {
                     case ChanTrend.Up => a + b
                     case ChanTrend.Down => a - b
                 }
-                // 合并后保留较早的索引
-                let mergedIdx = tail[tail.size - 2].index
-                tail.remove(at: tail.size - 1)
-                tail.remove(at: tail.size - 1)
-                tail.add(IndexedKline(merged, mergedIdx))
+                let mergedIdx = list[list.size - 2].index
+                list.remove(at: list.size - 1)
+                list.remove(at: list.size - 1)
+                list.add(IndexedKline(merged, mergedIdx))
             }
         }
     }
 
-    private func determineTrend(idx: Int64): ChanTrend {
-        if (idx > 0 && idx < tail.size) {
-            let prev = tail[idx - 1].kline; let curr = tail[idx].kline
+    private func determineTrend(list: ArrayList<IndexedKline>, idx: Int64): ChanTrend {
+        if (idx > 0 && idx < list.size) {
+            let prev = list[idx - 1].kline; let curr = list[idx].kline
             if (curr > prev) { return ChanTrend.Up }
             if (curr < prev) { return ChanTrend.Down }
         }

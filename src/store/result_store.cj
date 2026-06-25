@@ -5,7 +5,7 @@ import redis.client.*
 import trade.types.*
 import trade.log.*
 
-let rsLog = logger("ResultStore")
+let rsLog = logger("结果存储")
 
 // ──────────────────────────────────────────────
 // 管线结果持久化到 Redis
@@ -38,11 +38,11 @@ public class ResultStore {
         this.client = None
     }
 
-    /// 写入单条结果到 Redis ZSET
-    public func saveOne(symbol: String, depth: Int64, entry: RedisEntry): Unit {
+    /// 写入单条结果到 Redis ZSET，按实体类型分 key
+    public func saveOne(symbol: String, depth: Int64, entityType: String, entry: RedisEntry): Unit {
         match (client) {
             case Some(c) =>
-                let key = "trade:${symbol.toAsciiUpper()}:L${depth}:output"
+                let key = "trade:${symbol.toAsciiUpper()}:L${depth}:${entityType}"
                 try {
                     c.zadd(key, [(entry.score, Blob.of(entry.value))])
                 } catch (e: Exception) {

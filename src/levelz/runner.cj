@@ -6,7 +6,7 @@ import trade.core.*
 import trade.store.*
 import trade.log.*
 
-let log = logger("LvRunner")
+let log = logger("级别")
 
 // ──────────────────────────────────────────────
 // M4 级别运行器
@@ -60,26 +60,21 @@ public class LevelRunner {
         log.info("Level L${depth} started for ${symbol}")
 
         while (running) {
-            var kline: Kline
-            try {
-                kline = inputQueue.remove()     // 阻塞直到有数据
-            } catch (e: Exception) {
-                if (running) {
-                    log.warn("L${depth} input error: ${e}")
-                    sleep(Duration.millisecond * 100)
-                }
-                continue
-            }
+            // 阻塞等待有数据或超时，超时则继续检查 running 标志
+            let klineOpt = inputQueue.remove(Duration.second * 2)
+            match (klineOpt) {
+                case Some(kline) =>
+                    // 流式处理（内部已推入 OutputPipe）
+                    let result = pipeline.process(kline, outputPipe)
 
-            // 流式处理（内部已推入 OutputPipe）
-            let result = pipeline.process(kline, outputPipe)
-
-            // 检查完成趋势 → 级别升级
-            if (result.hasCompletedTrend) {
-                let trendKline = buildTrendKline(result)
-                let next = getOrCreateNextLevel()
-                next.enqueue(trendKline)
-                log.info("L${depth} trend completed → L${depth + 1} created for ${result.symbol}")
+                    // 检查完成趋势 → 级别升级
+                    if (result.hasCompletedTrend) {
+                        let trendKline = buildTrendKline(result)
+                        let next = getOrCreateNextLevel()
+                        next.enqueue(trendKline)
+                        log.info("L${depth} trend completed → L${depth + 1} created for ${result.symbol}")
+                    }
+                case None => ()
             }
         }
 
@@ -112,11 +107,12 @@ public class LevelRunner {
 
     /// 从完成走势构造趋势 K 线
     private func buildTrendKline(result: ProcessResult): Kline {
+        let h = if (result.trendHigh > result.trendLow) { result.trendHigh } else { result.trendLow }
+        let l = if (result.trendLow < result.trendHigh) { result.trendLow } else { result.trendHigh }
         Kline(
             0, 0,
             result.symbol, "trend",
-            result.trendHigh, 0.0,
-            result.trendLow, 0.0,
+            h, h, l, l,
             0.0, true
         )
     }

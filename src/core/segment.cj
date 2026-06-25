@@ -4,7 +4,7 @@ import std.collection.*
 import trade.types.*
 import trade.log.*
 
-let segLog = logger("SEG")
+let segLog = logger("线段")
 
 private struct FeatureK {
     let high: Float64; let low: Float64; let strokeIdx: Int64; let isUp: Bool
@@ -14,57 +14,64 @@ private struct FeatureK {
 }
 
 public class SegmentProcessor {
-    private let segments: ArrayList<AlgoSegment>
+    private let segments: RingBuffer<AlgoSegment>   // 最多 1 段：最后一段
     private var currentDir: ChanDirection
     private var segmentStart: Int64
-    private let procSeq: ArrayList<FeatureK>
+    private let procSeq: ArrayList<FeatureK>          // 特征序列，线段结束时清空
     private var pendingIdx: Int64
-    private let allStrokes: ArrayList<AlgoStroke>
+    private let allStrokes: RingBuffer<AlgoStroke>    // 最近 200 笔用于 pendig 检测
+    private var hasInitialized: Bool                  // 首笔方向是否已设定
 
     public init() {
-        this.segments = ArrayList<AlgoSegment>()
+        this.segments = RingBuffer<AlgoSegment>(1)
         this.currentDir = ChanDirection.Up
         this.segmentStart = 0
         this.procSeq = ArrayList<FeatureK>()
         this.pendingIdx = -1
-        this.allStrokes = ArrayList<AlgoStroke>()
+        this.allStrokes = RingBuffer<AlgoStroke>(200)
+        this.hasInitialized = false
     }
 
     public func process(newStrokes: ArrayList<AlgoStroke>): ArrayList<AlgoSegment> {
         let result = ArrayList<AlgoSegment>()
-        for (s in newStrokes) { allStrokes.add(s) }
-
-        for (i in 0 .. newStrokes.size) {
-            let s = newStrokes[i]
-
-            // 首笔决定方向
-            if (allStrokes.size == 1 && segmentStart == 0) {
-                match (s.direction) {
-                    case ChanDirection.Up => currentDir = ChanDirection.Up
-                    case ChanDirection.Down => currentDir = ChanDirection.Down
-                }
-                segLog.info("segment direction set")
-            }
-
-            if (s.direction != currentDir) {
-                procSeq.add(FeatureK(s.high, s.low, s.endIndex, s.direction == ChanDirection.Up))
-                mergeTail()
-                segLog.info("procSeq -> ${procSeq.size} elements (added opposite stroke)")
-            }
-
-            if (pendingIdx >= 0) {
-                match (checkPending()) { case Some(sg) => result.add(sg); segLog.info("segment formed via pending") case None => () }
-            } else {
-                match (checkFractal()) { case Some(sg) => result.add(sg); segLog.info("segment formed via fractal! procSeq was ${procSeq.size}") case None => () }
-            }
+        for (s in newStrokes) {
+            allStrokes.add(s)
+            processStroke(s, result)
         }
         result
     }
 
-    public func getSegments(): ArrayList<AlgoSegment> {
-        let copy = ArrayList<AlgoSegment>(); for (s in segments) { copy.add(s) }; copy
+    private func processStroke(s: AlgoStroke, result: ArrayList<AlgoSegment>): Unit {
+        // 首笔决定方向
+        if (!hasInitialized) {
+            match (s.direction) {
+                case ChanDirection.Up => currentDir = ChanDirection.Up
+                case ChanDirection.Down => currentDir = ChanDirection.Down
+            }
+            hasInitialized = true
+            segLog.info("segment direction set")
+        }
+
+        if (s.direction != currentDir) {
+            procSeq.add(FeatureK(s.high, s.low, s.endIndex, s.direction == ChanDirection.Up))
+            mergeTail()
+            segLog.info("procSeq -> ${procSeq.size} elements (added opposite stroke)")
+        }
+
+        if (pendingIdx >= 0) {
+            match (checkPending()) { case Some(sg) => result.add(sg); segLog.info("segment formed via pending") case None => () }
+        } else {
+            match (checkFractal()) { case Some(sg) => result.add(sg); segLog.info("segment formed via fractal! procSeq was ${procSeq.size}") case None => () }
+        }
     }
-    public func reset(): Unit { segments.clear(); currentDir = ChanDirection.Up; segmentStart = 0; procSeq.clear(); pendingIdx = -1; allStrokes.clear() }
+
+    public func getSegments(): ArrayList<AlgoSegment> {
+        segments.toArrayList()
+    }
+    public func reset(): Unit {
+        segments.clear(); currentDir = ChanDirection.Up; segmentStart = 0
+        procSeq.clear(); pendingIdx = -1; allStrokes.clear(); hasInitialized = false
+    }
 
     private func mergeTail(): Unit {
         if (procSeq.size < 2) { return }
@@ -73,7 +80,7 @@ public class SegmentProcessor {
             let a = procSeq[procSeq.size - 2]; let b = procSeq[procSeq.size - 1]
             segLog.info("procSeq -> ${procSeq.size} elements")
             if (!(a.high >= b.high && a.low <= b.low) && !(b.high >= a.high && b.low <= a.low)) { done = true; continue }
-            let m = mergeFk(a, b, false)  // 第一特征序列
+            let m = mergeFk(a, b, false)
             segLog.info("  mergeTail: merged a.high=${a.high} b.high=${b.high}")
             procSeq.remove(at: procSeq.size - 1); procSeq.remove(at: procSeq.size - 1); procSeq.add(m)
         }
@@ -110,8 +117,11 @@ public class SegmentProcessor {
 
     private func checkPending(): ?AlgoSegment {
         let seq = ArrayList<FeatureK>()
-        for (i in pendingIdx + 1 .. allStrokes.size) {
-            let s = allStrokes[i]
+        // 收集 pendig 后的同向笔（从 RingBuffer 中遍历）
+        let allStrokesList = allStrokes.toArrayList()
+        for (i in 0 .. allStrokesList.size) {
+            let s = allStrokesList[i]
+            if (s.endIndex <= pendingIdx) { continue }
             if (s.direction == currentDir) {
                 seq.add(FeatureK(s.high, s.low, i, s.direction == ChanDirection.Up))
                 if (seq.size >= 2) {

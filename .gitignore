@@ -3,3 +3,5 @@
 target/
 cjpm.lock
 *.macrocall
+docs/dataset/
+.idea/

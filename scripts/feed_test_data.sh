@@ -72,7 +72,7 @@ while true; do
 
     COUNT=$((COUNT + 1))
     OPEN_TIME=$((OPEN_TIME + 60000))
-    BASE_PRICE=$((BASE_PRICE + RANDOM % 100 - 50))
+    BASE_PRICE=$((BASE_PRICE + 50 + RANDOM % 100))
 
-    sleep 0.5
+    sleep 0.25
 done

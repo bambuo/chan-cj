@@ -8,7 +8,7 @@ import trade.types.*
 import trade.bus.*
 import trade.log.*
 
-let srcLog = logger("Source")
+let srcLog = logger("数据源")
 
 // ──────────────────────────────────────────────
 // M1 数据源 — Redis Stream 消费
@@ -161,12 +161,14 @@ public class DataSource {
             match (fieldName) {
                 case "symbol" => symbol = val
                 case "openTime" => openTime = Int64.parse(val)
+                case "ts" => openTime = Int64.parse(val)           // 兼容 ts
                 case "closeTime" => closeTime = Int64.parse(val)
                 case "open" => open = Float64.parse(val)
                 case "high" => high = Float64.parse(val)
                 case "low" => low = Float64.parse(val)
                 case "close" => close = Float64.parse(val)
                 case "volume" => volume = Float64.parse(val)
+                case "baseVolume" => volume = Float64.parse(val)   // 兼容 baseVolume
                 case "isClosed" => isClosed = (val == "true")
                 case _ => ()
             }

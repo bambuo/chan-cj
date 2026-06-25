@@ -3,15 +3,17 @@ package trade.core
 import std.collection.*
 import trade.types.*
 
-// 背驰判定（流式版 — 不再接收全量数据）
+// 背驰判定（流式版）
+// RingBuffer 保留最近 1 个背驰信号
+// MACD 缓冲区已上限 200 条
 
 public class DivergenceProcessor {
-    private let divergences: ArrayList<AlgoDivergence>
+    private let divergences: RingBuffer<AlgoDivergence>
     private let macdValues: HashMap<String, ArrayList<Float64>>
     private let MAX_MACD: Int64 = 200
 
     public init() {
-        this.divergences = ArrayList<AlgoDivergence>()
+        this.divergences = RingBuffer<AlgoDivergence>(1)
         this.macdValues = HashMap<String, ArrayList<Float64>>()
     }
 
@@ -45,11 +47,12 @@ public class DivergenceProcessor {
             case ChanDirection.Down => "bottomDivergence"
         }
         let d = AlgoDivergence(symbol, dType, true, entryArea, exitArea, ratio, entryPrice)
-        divergences.add(d); result.add(d)
+        divergences.add(d)
+        result.add(d)
         result
     }
 
-    public func getDivergences(): ArrayList<AlgoDivergence> { let c = ArrayList<AlgoDivergence>(); for (d in divergences) { c.add(d) }; c }
+    public func getDivergences(): ArrayList<AlgoDivergence> { divergences.toArrayList() }
     public func reset(): Unit { divergences.clear(); macdValues.clear() }
 
     private func calcMACDArea(values: ArrayList<Float64>): Float64 {
