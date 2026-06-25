@@ -13,6 +13,7 @@
   package-configuration = {}
 
 [dependencies]
+redis = { git = "https://github.com/bambuo/redis-cj.git", branch = "main" }
 
 [target.x86_64-w64-mingw32]
   compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated -lcrypt32"
@@ -31,6 +32,6 @@
 
 [target.aarch64-apple-darwin]
   compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated"
-  link-option = "-headerpad_max_install_names -lcangjie-dynamicLoader-opensslFFI -lstdx.net.tlsFFI -lstdx.net.tls"
+  link-option = "-headerpad_max_install_names -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
   [target.aarch64-apple-darwin.bin-dependencies]
     path-option = [ "${CANGJIE_STDX_PATH}" ]
