@@ -2,193 +2,148 @@ package trade.core
 
 import std.collection.*
 import trade.types.*
+import trade.log.*
 
-// ──────────────────────────────────────────────
-// 线段划分（M2 管线第四级）
-//
-// 基于特征序列的线段划分算法：
-//   情况一：特征序列分型第 1、2 元素间无缺口 → 直接确认
-//   情况二：有缺口 → 等待第二特征序列分型确认
-// ──────────────────────────────────────────────
+let segLog = logger("SEG")
 
-/// 线段（算法内部表示）
-public struct AlgoSegment {
-    public let direction: ChanDirection
-    public let strokes: ArrayList<AlgoStroke>
-    public let startIndex: Int64
-    public let endIndex: Int64
-    public let high: Float64
-    public let low: Float64
-
-    public init(direction: ChanDirection, strokes: ArrayList<AlgoStroke>,
-                startIndex: Int64, endIndex: Int64, high: Float64, low: Float64) {
-        this.direction = direction
-        this.strokes = strokes
-        this.startIndex = startIndex
-        this.endIndex = endIndex
-        this.high = high
-        this.low = low
-    }
-}
-
-/// 线段待确认状态
-private struct PendingSegment {
-    let pivotFractal: (Float64, Float64)  // 分型极值 (high, low)
-    let firstGap: Bool                     // 第1、2元素间是否有缺口
-    let startStrokeIdx: Int64
-
-    public init(pivotFractal: (Float64, Float64), firstGap: Bool, startStrokeIdx: Int64) {
-        this.pivotFractal = pivotFractal
-        this.firstGap = firstGap
-        this.startStrokeIdx = startStrokeIdx
+private struct FeatureK {
+    let high: Float64; let low: Float64; let strokeIdx: Int64; let isUp: Bool
+    public init(high: Float64, low: Float64, strokeIdx: Int64, isUp: Bool) {
+        this.high = high; this.low = low; this.strokeIdx = strokeIdx; this.isUp = isUp
     }
 }
 
 public class SegmentProcessor {
     private let segments: ArrayList<AlgoSegment>
-    private var pending: ?PendingSegment
-    private var lastDirection: ChanDirection
+    private var currentDir: ChanDirection
+    private var segmentStart: Int64
+    private let procSeq: ArrayList<FeatureK>
+    private var pendingIdx: Int64
+    private let allStrokes: ArrayList<AlgoStroke>
 
     public init() {
         this.segments = ArrayList<AlgoSegment>()
-        this.pending = None
-        this.lastDirection = ChanDirection.Up
+        this.currentDir = ChanDirection.Up
+        this.segmentStart = 0
+        this.procSeq = ArrayList<FeatureK>()
+        this.pendingIdx = -1
+        this.allStrokes = ArrayList<AlgoStroke>()
     }
 
-    /// 增量处理笔序列
-    public func process(strokes: ArrayList<AlgoStroke>): Unit {
-        if (strokes.size < 3) { return }
+    public func process(newStrokes: ArrayList<AlgoStroke>): ArrayList<AlgoSegment> {
+        let result = ArrayList<AlgoSegment>()
+        for (s in newStrokes) { allStrokes.add(s) }
 
-        // 检查是否有待确认的线段
-        match (pending) {
-            case Some(p) => checkPendingConfirm(strokes, p)
-            case None => scanSegments(strokes)
+        for (i in 0 .. newStrokes.size) {
+            let s = newStrokes[i]
+
+            // 首笔决定方向
+            if (allStrokes.size == 1 && segmentStart == 0) {
+                match (s.direction) {
+                    case ChanDirection.Up => currentDir = ChanDirection.Up
+                    case ChanDirection.Down => currentDir = ChanDirection.Down
+                }
+                segLog.info("segment direction set")
+            }
+
+            if (s.direction != currentDir) {
+                procSeq.add(FeatureK(s.high, s.low, s.endIndex, s.direction == ChanDirection.Up))
+                mergeTail()
+                segLog.info("procSeq -> ${procSeq.size} elements (added opposite stroke)")
+            }
+
+            if (pendingIdx >= 0) {
+                match (checkPending()) { case Some(sg) => result.add(sg); segLog.info("segment formed via pending") case None => () }
+            } else {
+                match (checkFractal()) { case Some(sg) => result.add(sg); segLog.info("segment formed via fractal! procSeq was ${procSeq.size}") case None => () }
+            }
         }
+        result
     }
 
-    /// 获取当前所有线段
     public func getSegments(): ArrayList<AlgoSegment> {
-        let copy = ArrayList<AlgoSegment>()
-        for (s in segments) { copy.add(s) }
-        copy
+        let copy = ArrayList<AlgoSegment>(); for (s in segments) { copy.add(s) }; copy
+    }
+    public func reset(): Unit { segments.clear(); currentDir = ChanDirection.Up; segmentStart = 0; procSeq.clear(); pendingIdx = -1; allStrokes.clear() }
+
+    private func mergeTail(): Unit {
+        if (procSeq.size < 2) { return }
+        var done = false
+        while (!done && procSeq.size >= 2) {
+            let a = procSeq[procSeq.size - 2]; let b = procSeq[procSeq.size - 1]
+            segLog.info("procSeq -> ${procSeq.size} elements")
+            if (!(a.high >= b.high && a.low <= b.low) && !(b.high >= a.high && b.low <= a.low)) { done = true; continue }
+            let m = mergeFk(a, b, false)  // 第一特征序列
+            segLog.info("  mergeTail: merged a.high=${a.high} b.high=${b.high}")
+            procSeq.remove(at: procSeq.size - 1); procSeq.remove(at: procSeq.size - 1); procSeq.add(m)
+        }
     }
 
-    /// 重置
-    public func reset(): Unit {
-        segments.clear()
-        pending = None
-        lastDirection = ChanDirection.Up
-    }
-
-    // ── 内部 ──
-
-    /// 扫描线段（情况一）
-    private func scanSegments(strokes: ArrayList<AlgoStroke>): Unit {
-        let count = strokes.size
-        var i = if (segments.size > 0) { segments[segments.size - 1].endIndex + 1 } else { 0 }
-
-        while (i < count - 2) {
-            let s1 = strokes[i]
-            let s2 = strokes[i + 1]
-            let s3 = strokes[i + 2]
-
-            // 检查特征序列分型
-            // 向上线段看顶分型：s2 是向下笔，检查 s2 是否形成顶分型
-            // 向下线段看底分型
-            if (lastDirection == ChanDirection.Up) {
-                // 向上线段：特征序列是向下笔
-                if (s2.direction == ChanDirection.Down) {
-                    if (isTopFractalStroke(s1, s2, s3)) {
-                        // 检查第 1、2 元素间是否有缺口
-                        let gap = hasGap(s1, s2)
-                        if (!gap) {
-                            // 情况一：直接确认
-                            createSegment(strokes, i, i + 2)
-                            i += 3
-                        } else {
-                            // 情况二：待确认
-                            pending = Some(PendingSegment(
-                                (s2.high, s2.low), true, i))
-                            i++
-                        }
-                    } else { i++ }
-                } else { i++ }
-            } else {
-                // 向下线段：特征序列是向上笔
-                if (s2.direction == ChanDirection.Up) {
-                    if (isBottomFractalStroke(s1, s2, s3)) {
-                        let gap = hasGap(s1, s2)
-                        if (!gap) {
-                            createSegment(strokes, i, i + 2)
-                            i += 3
-                        } else {
-                            pending = Some(PendingSegment(
-                                (s2.low, s2.high), true, i))
-                            i++
-                        }
-                    } else { i++ }
-                } else { i++ }
+    private func mergeFk(a: FeatureK, b: FeatureK, isSecond: Bool): FeatureK {
+        if (isSecond) {
+            match (currentDir) {
+                case ChanDirection.Up => FeatureK(if (a.high > b.high) { a.high } else { b.high }, if (a.low > b.low) { a.low } else { b.low }, b.strokeIdx, true)
+                case ChanDirection.Down => FeatureK(if (a.high < b.high) { a.high } else { b.high }, if (a.low < b.low) { a.low } else { b.low }, b.strokeIdx, false)
+            }
+        } else {
+            match (currentDir) {
+                case ChanDirection.Up => FeatureK(if (a.high < b.high) { a.high } else { b.high }, if (a.low < b.low) { a.low } else { b.low }, b.strokeIdx, false)
+                case ChanDirection.Down => FeatureK(if (a.high > b.high) { a.high } else { b.high }, if (a.low > b.low) { a.low } else { b.low }, b.strokeIdx, true)
             }
         }
     }
 
-    /// 检查待确认线段（情况二）
-    private func checkPendingConfirm(strokes: ArrayList<AlgoStroke>, p: PendingSegment): Unit {
-        // 在第二特征序列中寻找分型
-        let count = strokes.size
-        let startIdx = p.startStrokeIdx + 1
-        if (startIdx >= count - 2) { return }
+    private func checkFractal(): ?AlgoSegment {
+        if (procSeq.size < 3) { return None }
+        let a = procSeq[procSeq.size - 3]; let b = procSeq[procSeq.size - 2]; let c = procSeq[procSeq.size - 1]
+        let has = match (currentDir) {
+            case ChanDirection.Up => b.high > a.high && b.high > c.high && b.low > a.low && b.low > c.low
+            case ChanDirection.Down => b.low < a.low && b.low < c.low && b.high < a.high && b.high < c.high
+        }
+        segLog.info("checkFractal: procSeq=${procSeq.size}, hasFractal=${has}")
+        if (!has) { return None }
+        if (!(a.high < b.low || a.low > b.high)) {
+            return closeSegment(b.strokeIdx)
+        }
+        pendingIdx = b.strokeIdx; procSeq.clear(); None
+    }
 
-        for (i in startIdx .. count - 2) {
-            let s1 = strokes[i]
-            let s2 = strokes[i + 1]
-            let s3 = strokes[i + 2]
-
-            // 第二特征序列分型（不分缺口，有分型即可）
-            if (lastDirection == ChanDirection.Up) {
-                if (s2.direction == ChanDirection.Up &&
-                    isBottomFractalStroke(s1, s2, s3)) {
-                    // 确认线段在之前的分型极值处结束
-                    createSegment(strokes, 0, p.startStrokeIdx + 1)
-                    pending = None
-                    return
-                }
-            } else {
-                if (s2.direction == ChanDirection.Down &&
-                    isTopFractalStroke(s1, s2, s3)) {
-                    createSegment(strokes, 0, p.startStrokeIdx + 1)
-                    pending = None
-                    return
+    private func checkPending(): ?AlgoSegment {
+        let seq = ArrayList<FeatureK>()
+        for (i in pendingIdx + 1 .. allStrokes.size) {
+            let s = allStrokes[i]
+            if (s.direction == currentDir) {
+                seq.add(FeatureK(s.high, s.low, i, s.direction == ChanDirection.Up))
+                if (seq.size >= 2) {
+                    var done = false
+                    while (!done && seq.size >= 2) {
+                        let a = seq[seq.size - 2]; let b = seq[seq.size - 1]
+                        if (!(a.high >= b.high && a.low <= b.low) && !(b.high >= a.high && b.low <= a.low)) { done = true; continue }
+                        let m = mergeFk(a, b, true)
+                        seq.remove(at: seq.size - 1); seq.remove(at: seq.size - 1); seq.add(m)
+                    }
                 }
             }
         }
+        if (seq.size < 3) { return None }
+        for (i in 0 .. seq.size - 2) {
+            let a = seq[i]; let b = seq[i + 1]; let c = seq[i + 2]
+            let has = match (currentDir) {
+                case ChanDirection.Up => b.low < a.low && b.low < c.low && b.high < a.high && b.high < c.high
+                case ChanDirection.Down => b.high > a.high && b.high > c.high && b.low > a.low && b.low > c.low
+            }
+            if (has) { let saved = pendingIdx; pendingIdx = -1; return closeSegment(saved) }
+        }
+        None
     }
 
-    private func createSegment(strokes: ArrayList<AlgoStroke>, from: Int64, to: Int64): Unit {
-        let segStrokes = ArrayList<AlgoStroke>()
-        var high = -1.0e308
-        var low = 1.0e308
-        for (i in from .. to) {
-            segStrokes.add(strokes[i])
-            if (strokes[i].high > high) { high = strokes[i].high }
-            if (strokes[i].low < low) { low = strokes[i].low }
-        }
-
-        let seg = AlgoSegment(lastDirection, segStrokes, from, to - 1, high, low)
+    private func closeSegment(endIdx: Int64): ?AlgoSegment {
+        if (segmentStart > endIdx) { return None }
+        let seg = AlgoSegment(currentDir, ArrayList<AlgoStroke>(), segmentStart, endIdx, 0.0, 0.0)
         segments.add(seg)
-        lastDirection = if (lastDirection == ChanDirection.Up) { ChanDirection.Down } else { ChanDirection.Up }
-    }
-
-    private func isTopFractalStroke(a: AlgoStroke, b: AlgoStroke, c: AlgoStroke): Bool {
-        b.high > a.high && b.high > c.high && b.low > a.low && b.low > c.low
-    }
-
-    private func isBottomFractalStroke(a: AlgoStroke, b: AlgoStroke, c: AlgoStroke): Bool {
-        b.low < a.low && b.low < c.low && b.high < a.high && b.high < c.high
-    }
-
-    private func hasGap(a: AlgoStroke, b: AlgoStroke): Bool {
-        // 缺口：两笔的价格区间完全不重叠
-        a.high < b.low || a.low > b.high
+        segmentStart = endIdx + 1
+        currentDir = match (currentDir) { case ChanDirection.Up => ChanDirection.Down case ChanDirection.Down => ChanDirection.Up }
+        procSeq.clear()
+        Some(seg)
     }
 }

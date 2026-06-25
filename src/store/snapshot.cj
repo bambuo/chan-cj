@@ -3,6 +3,9 @@ package trade.store
 import std.collection.*
 import std.convert.*
 import trade.types.*
+import trade.log.*
+
+let snapLog = logger("Snapshot")
 
 // ──────────────────────────────────────────────
 // M0 快照管理器
@@ -48,12 +51,12 @@ public class SnapshotManager {
 
     /// 保存快照（简化：不实际写磁盘，仅记录内存日志）
     public func save(symbol: String, snapshot: Snapshot): Unit {
-        println("[Snapshot] Saving snapshot for ${symbol}")
+        snapLog.info("Saving snapshot for ${symbol}")
     }
 
     /// 恢复最新快照（简化：始终返回 None）
     public func restoreLatest(symbol: String): ?Snapshot {
-        println("[Snapshot] No snapshot available for ${symbol}")
+        snapLog.info("No snapshot available for ${symbol}")
         None
     }
 }

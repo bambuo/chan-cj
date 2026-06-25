@@ -44,7 +44,7 @@ public enum ChanDirection {
     | Down
 }
 
-/// 笔
+/// 笔（M3 结构类型）
 public struct Stroke {
     public let id: String
     public let elementType: ElementType
@@ -75,12 +75,12 @@ public struct Stroke {
 
 /// 中枢
 public struct PivotZone {
-    public let zg: Float64      // 中枢上沿（高点中的最小者）
-    public let zd: Float64      // 中枢下沿（低点中的最大者）
+    public let zg: Float64
+    public let zd: Float64
     public let startIndex: Int64
     public let endIndex: Int64
-    public let direction: ChanDirection  // 中枢方向
-    public let completed: Bool           // 是否被第三类买卖点确认完成
+    public let direction: ChanDirection
+    public let completed: Bool
 
     public init(zg: Float64, zd: Float64, startIndex: Int64, endIndex: Int64,
                 direction: ChanDirection, completed: Bool) {
@@ -95,8 +95,8 @@ public struct PivotZone {
 
 /// 走势类型
 public struct TrendPattern {
-    public let direction: ChanDirection  // 上涨/下跌
-    public let isTrend: Bool             // 趋势(true) 还是 盘整(false)
+    public let direction: ChanDirection
+    public let isTrend: Bool
     public let pivotZones: ArrayList<PivotZone>
     public let completed: Bool
 
@@ -141,7 +141,7 @@ public struct LevelStructure {
     }
 }
 
-/// 双轨状态（临时轨 + 确认轨）
+/// 双轨状态
 public struct DualTrackState {
     public let provisional: LevelStructure
     public let confirmed: LevelStructure
@@ -154,5 +154,117 @@ public struct DualTrackState {
         this.confirmed = confirmed
         this.inSync = inSync
         this.driftSince = driftSince
+    }
+}
+
+/// 线段（算法内部表示）
+public struct AlgoSegment {
+    public let direction: ChanDirection
+    public let strokes: ArrayList<AlgoStroke>
+    public let startIndex: Int64
+    public let endIndex: Int64
+    public let high: Float64
+    public let low: Float64
+
+    public init(direction: ChanDirection, strokes: ArrayList<AlgoStroke>,
+                startIndex: Int64, endIndex: Int64, high: Float64, low: Float64) {
+        this.direction = direction
+        this.strokes = strokes
+        this.startIndex = startIndex
+        this.endIndex = endIndex
+        this.high = high
+        this.low = low
+    }
+}
+
+/// 笔（算法内部表示）
+public struct AlgoStroke {
+    public let start: ChanKline
+    public let end: ChanKline
+    public let startIndex: Int64
+    public let endIndex: Int64
+    public let direction: ChanDirection
+    public let isVirtual: Bool
+    public let startPrice: Float64
+    public let endPrice: Float64
+    public let high: Float64
+    public let low: Float64
+
+    public init(start: ChanKline, end: ChanKline,
+                startIndex: Int64, endIndex: Int64,
+                direction: ChanDirection, isVirtual: Bool,
+                startPrice: Float64, endPrice: Float64,
+                high: Float64, low: Float64) {
+        this.start = start
+        this.end = end
+        this.startIndex = startIndex
+        this.endIndex = endIndex
+        this.direction = direction
+        this.isVirtual = isVirtual
+        this.startPrice = startPrice
+        this.endPrice = endPrice
+        this.high = high
+        this.low = low
+    }
+}
+
+/// 中枢（算法内部表示）
+public class AlgoPivotZone {
+    public let zg: Float64
+    public let zd: Float64
+    public let startIndex: Int64
+    public var endIndex: Int64
+    public let direction: ChanDirection
+    public var completed: Bool
+
+    public init(zg: Float64, zd: Float64, startIndex: Int64, endIndex: Int64,
+                direction: ChanDirection, completed: Bool) {
+        this.zg = zg
+        this.zd = zd
+        this.startIndex = startIndex
+        this.endIndex = endIndex
+        this.direction = direction
+        this.completed = completed
+    }
+}
+
+/// 走势类型（算法内部表示）
+public class AlgoTrendPattern {
+    public let direction: ChanDirection
+    public var isTrend: Bool
+    public let zones: ArrayList<AlgoPivotZone>
+    public var completed: Bool
+    public var completionReason: String
+
+    public init(direction: ChanDirection, isTrend: Bool,
+                zones: ArrayList<AlgoPivotZone>, completed: Bool,
+                completionReason: String) {
+        this.direction = direction
+        this.isTrend = isTrend
+        this.zones = zones
+        this.completed = completed
+        this.completionReason = completionReason
+    }
+}
+
+/// 背驰信号（算法内部表示）
+public class AlgoDivergence {
+    public let symbol: String
+    public let divergenceType: String
+    public let confirmed: Bool
+    public let entryMACD: Float64
+    public let exitMACD: Float64
+    public let ratio: Float64
+    public let priceHigh: Float64
+
+    public init(symbol: String, divergenceType: String, confirmed: Bool,
+                entryMACD: Float64, exitMACD: Float64, ratio: Float64, priceHigh: Float64) {
+        this.symbol = symbol
+        this.divergenceType = divergenceType
+        this.confirmed = confirmed
+        this.entryMACD = entryMACD
+        this.exitMACD = exitMACD
+        this.ratio = ratio
+        this.priceHigh = priceHigh
     }
 }

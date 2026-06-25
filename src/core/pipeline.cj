@@ -2,76 +2,17 @@ package trade.core
 
 import std.collection.*
 import trade.types.*
+import trade.store.*
+import trade.log.*
+
+let log = logger("M2")
 
 // ──────────────────────────────────────────────
-// 管线编排（M2 Facade）
-//
-// 整合 7 个处理器为按 symbol 管理的管线：
-//   contain → fractal → stroke → segment → pivotzone → trendpattern → divergence
-// 维护提交水位，支持增量输出
+// 流式管线
+// 每个步骤产出增量，即时推入 OutputPipe → Redis
+// 返回值仅含升级所需信息
 // ──────────────────────────────────────────────
 
-/// 管线输出
-public struct PipelineOutput {
-    public let symbol: String
-    public let newElements: ArrayList<ChanKline>
-    public let newFractals: ArrayList<Fractal>
-    public let allElements: ArrayList<ChanKline>
-    public let allFractals: ArrayList<Fractal>
-    public let strokes: ArrayList<AlgoStroke>
-    public let newStrokes: ArrayList<AlgoStroke>
-    public let segments: ArrayList<AlgoSegment>
-    public let newSegments: ArrayList<AlgoSegment>
-    public let pivotZones: ArrayList<AlgoPivotZone>
-    public let newPivotZones: ArrayList<AlgoPivotZone>
-    public let trendPatterns: ArrayList<AlgoTrendPattern>
-    public let newTrendPatterns: ArrayList<AlgoTrendPattern>
-    public let divergences: ArrayList<AlgoDivergence>
-    public let newDivergences: ArrayList<AlgoDivergence>
-    public let totalKlines: Int64
-    public let lastOpenTime: Int64
-    public let hasChange: Bool
-
-    public init(symbol: String,
-                newElements: ArrayList<ChanKline>,
-                newFractals: ArrayList<Fractal>,
-                allElements: ArrayList<ChanKline>,
-                allFractals: ArrayList<Fractal>,
-                strokes: ArrayList<AlgoStroke>,
-                newStrokes: ArrayList<AlgoStroke>,
-                segments: ArrayList<AlgoSegment>,
-                newSegments: ArrayList<AlgoSegment>,
-                pivotZones: ArrayList<AlgoPivotZone>,
-                newPivotZones: ArrayList<AlgoPivotZone>,
-                trendPatterns: ArrayList<AlgoTrendPattern>,
-                newTrendPatterns: ArrayList<AlgoTrendPattern>,
-                divergences: ArrayList<AlgoDivergence>,
-                newDivergences: ArrayList<AlgoDivergence>,
-                totalKlines: Int64,
-                lastOpenTime: Int64,
-                hasChange: Bool) {
-        this.symbol = symbol
-        this.newElements = newElements
-        this.newFractals = newFractals
-        this.allElements = allElements
-        this.allFractals = allFractals
-        this.strokes = strokes
-        this.newStrokes = newStrokes
-        this.segments = segments
-        this.newSegments = newSegments
-        this.pivotZones = pivotZones
-        this.newPivotZones = newPivotZones
-        this.trendPatterns = trendPatterns
-        this.newTrendPatterns = newTrendPatterns
-        this.divergences = divergences
-        this.newDivergences = newDivergences
-        this.totalKlines = totalKlines
-        this.lastOpenTime = lastOpenTime
-        this.hasChange = hasChange
-    }
-}
-
-/// Symbol 管线状态
 public class SymbolState {
     public let symbol: String
     public let contain: ContainProcessor
@@ -81,227 +22,171 @@ public class SymbolState {
     public let pivotZone: PivotZoneProcessor
     public let trendPattern: TrendPatternProcessor
     public let divergence: DivergenceProcessor
-
     public var totalKlines: Int64
-    public var lastOpenTime: Int64
-    public var lastCommittedElementN: Int64
-    public var lastCommittedFractalN: Int64
-    public var lastCommittedStrokeN: Int64
-    public var lastCommittedSegN: Int64
-    public var lastCommittedPivotZoneN: Int64
-    public var lastCommittedTrendPatternN: Int64
-    public var lastCommittedDivergenceN: Int64
 
-    public init(symbol: String, mode: PivotZoneMode) {
+    public init(symbol: String) {
         this.symbol = symbol
         this.contain = ContainProcessor()
         this.fractal = FractalProcessor()
         this.stroke = StrokeProcessor(true)
         this.segment = SegmentProcessor()
-        this.pivotZone = PivotZoneProcessor(mode)
+        this.pivotZone = PivotZoneProcessor(PivotZoneMode.Stroke)
         this.trendPattern = TrendPatternProcessor()
         this.divergence = DivergenceProcessor()
         this.totalKlines = 0
-        this.lastOpenTime = 0
-        this.lastCommittedElementN = 0
-        this.lastCommittedFractalN = 0
-        this.lastCommittedStrokeN = 0
-        this.lastCommittedSegN = 0
-        this.lastCommittedPivotZoneN = 0
-        this.lastCommittedTrendPatternN = 0
-        this.lastCommittedDivergenceN = 0
     }
 
-    /// 重置
     public func reset(): Unit {
-        contain.reset()
-        fractal.reset()
-        stroke.reset()
-        segment.reset()
-        pivotZone.reset()
-        trendPattern.reset()
-        divergence.reset()
-        totalKlines = 0
-        lastOpenTime = 0
-        lastCommittedElementN = 0
-        lastCommittedFractalN = 0
-        lastCommittedStrokeN = 0
-        lastCommittedSegN = 0
-        lastCommittedPivotZoneN = 0
-        lastCommittedTrendPatternN = 0
-        lastCommittedDivergenceN = 0
+        contain.reset(); fractal.reset(); stroke.reset(); segment.reset()
+        pivotZone.reset(); trendPattern.reset(); divergence.reset(); totalKlines = 0
     }
 }
 
-/// 管线编排器
 public class Pipeline {
     private let symbols: HashMap<String, SymbolState>
-    private let mode: PivotZoneMode
 
-    public init(mode: PivotZoneMode) {
-        this.symbols = HashMap<String, SymbolState>()
-        this.mode = mode
-    }
+    public init() { this.symbols = HashMap<String, SymbolState>() }
 
-    /// 获取或创建 symbol 状态
     public func getOrCreate(symbol: String): SymbolState {
-        let state = symbols.get(symbol)
-        match (state) {
+        match (symbols.get(symbol)) {
             case Some(s) => s
-            case None =>
-                let newState = SymbolState(symbol, mode)
-                symbols.add(symbol, newState)
-                newState
+            case None => let ns = SymbolState(symbol); symbols.add(symbol, ns); ns
         }
     }
 
-    /// 重置指定 symbol
     public func reset(symbol: String): Unit {
-        let state = symbols.get(symbol)
-        match (state) {
-            case Some(s) => s.reset()
+        match (symbols.get(symbol)) { case Some(s) => s.reset() case None => () }
+    }
+
+    /// 流式处理：每步只产增量，即时推入 OutputPipe
+    public func process(kline: Kline, pipe: OutputPipe): ProcessResult {
+        let symbol = kline.symbol.toAsciiLower()
+        let state = getOrCreate(symbol)
+        state.totalKlines++
+
+        var hasChange = false
+        var hasCompletedTrend = false
+        var trendDir = ChanDirection.Up
+        var trendHigh = 0.0
+        var trendLow = 0.0
+
+        // ── Step 1: 包含处理 ──
+        let merged = state.contain.process(kline)
+        match (merged) {
+            case Some(ck) =>
+                pipe.push(RedisEntry(Float64(ck.time), "merged:${ck.high},${ck.low}"))
+                hasChange = true
             case None => ()
         }
-    }
 
-    /// 处理一根原始 K 线，返回管线输出
-    public func process(kline: Kline): PipelineOutput {
-        let state = getOrCreate(kline.symbol.toAsciiLower())
-        processWithState(state, kline)
-    }
-
-    private func processWithState(state: SymbolState, raw: Kline): PipelineOutput {
-        // 1. 包含处理
-        state.contain.process(raw)
-        state.totalKlines++
-        state.lastOpenTime = raw.openTime
-
-        // 2. 喂入收盘价（MACD 计算）
-        state.divergence.feedClose(state.symbol, raw.close)
-
-        // 3. 获取当前非包含元素
-        let elements = state.contain.getElements()
-
-        // 4. 新增元素
-        let oldElemN = state.lastCommittedElementN
-        let newElements = ArrayList<ChanKline>()
-        for (i in oldElemN .. elements.size) {
-            newElements.add(elements[i])
+        // ── Step 2: 分型识别 ──
+        let (lastElements, baseOffset) = state.contain.getLastWithOffset(3)
+        let newFractals = state.fractal.scan(lastElements, baseOffset)
+        for (f in newFractals) {
+            let ftype = match (f.ftype) {
+                case FractalType.Top => "top"
+                case FractalType.Bottom => "bottom"
+            }
+            pipe.push(RedisEntry(Float64(f.kline.time), "fractal:${ftype},${f.kline.high},${f.kline.low},${f.index}"))
+            hasChange = true
         }
 
-        // 5. 增量分型识别
-        state.fractal.process(elements)
-
-        // 6. 获取所有分型
-        let allFractals = state.fractal.getFractals()
-        let oldFractalN = state.lastCommittedFractalN
-        let newFractals = ArrayList<Fractal>()
-        for (i in oldFractalN .. allFractals.size) {
-            newFractals.add(allFractals[i])
-        }
-
-        // 7. 增量笔识别
-        if (newFractals.size > 0) {
-            state.stroke.processBatch(newFractals)
-        }
-
-        // 8. 获取所有笔
-        let allStrokes = state.stroke.getConfirmedStrokes()
-        let oldStrokeN = state.lastCommittedStrokeN
+        // ── Step 3: 笔识别 ──
+        let latestCk = state.contain.getLatest()
         let newStrokes = ArrayList<AlgoStroke>()
-        for (i in oldStrokeN .. allStrokes.size) {
-            newStrokes.add(allStrokes[i])
+        for (f in newFractals) {
+            let lk = match (latestCk) { case Some(ck) => ck case None => ChanKline(0, 0.0, 0.0) }
+            let ns = state.stroke.process(f, lk, false)
+            for (s in ns) {
+                let dir = match (s.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
+                pipe.push(RedisEntry(Float64(s.endIndex), "stroke:${dir},${s.startIndex},${s.endIndex},${s.startPrice},${s.endPrice},${s.high},${s.low}"))
+                newStrokes.add(s)
+                hasChange = true
+            }
         }
 
-        // 9. 增量线段识别
+        // ── Step 4: 线段 ──
+        var newSegments = ArrayList<AlgoSegment>()
+        var newPivotZones = ArrayList<AlgoPivotZone>()
+        var newTrendPatterns = ArrayList<AlgoTrendPattern>()
         if (newStrokes.size > 0) {
-            state.segment.process(allStrokes)
+            newSegments = state.segment.process(newStrokes)
+            for (seg in newSegments) {
+                let dir = match (seg.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
+                pipe.push(RedisEntry(Float64(seg.endIndex), "segment:${dir},${seg.startIndex},${seg.endIndex}"))
+                hasChange = true
+            }
+
+            // ── Step 5: 中枢 ──
+            newPivotZones = state.pivotZone.process(newStrokes)
+            for (z in newPivotZones) {
+                let dir = match (z.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
+                pipe.push(RedisEntry(Float64(z.endIndex), "pivot:${z.zg},${z.zd},${z.startIndex},${z.endIndex},${dir},${z.completed}"))
+                hasChange = true
+            }
+
+            // ── Step 6: 走势类型 ──
+            newTrendPatterns = state.trendPattern.process(newPivotZones)
+            for (tp in newTrendPatterns) {
+                let tpDir = match (tp.direction) { case ChanDirection.Up => "up" case ChanDirection.Down => "down" }
+                pipe.push(RedisEntry(Float64(0), "trend:${tpDir},${tp.completed},${tp.zones.size}"))
+                hasChange = true
+            }
         }
 
-        let allSegments = state.segment.getSegments()
-        let oldSegN = state.lastCommittedSegN
-        let newSegments = ArrayList<AlgoSegment>()
-        for (i in oldSegN .. allSegments.size) {
-            newSegments.add(allSegments[i])
+        // ── Step 7: 背驰 ──
+        state.divergence.feedClose(symbol, kline.close)
+
+        var lastDir = ChanDirection.Up
+        var lastCompleted = false
+        var entryPrice = 0.0
+        if (newTrendPatterns.size > 0) {
+            let last = newTrendPatterns[newTrendPatterns.size - 1]
+            lastDir = last.direction
+            lastCompleted = last.completed
+            if (newStrokes.size > 0) { entryPrice = newStrokes[newStrokes.size - 1].endPrice }
+        }
+        let newDivergences = state.divergence.process(symbol, entryPrice, lastDir, lastCompleted)
+        for (d in newDivergences) {
+            pipe.push(RedisEntry(Float64(0), "divergence:${d.divergenceType},${d.ratio},${d.confirmed}"))
+            hasChange = true
         }
 
-        // 10. 增量中枢识别
-        if (newStrokes.size > 0) {
-            state.pivotZone.process(allStrokes)
-        }
-
-        let allPivotZones = state.pivotZone.getZones()
-        let oldPivotZoneN = state.lastCommittedPivotZoneN
-        let newPivotZones = ArrayList<AlgoPivotZone>()
-        for (i in oldPivotZoneN .. allPivotZones.size) {
-            newPivotZones.add(allPivotZones[i])
-        }
-
-        // 11. 走势类型
-        if (newPivotZones.size > 0) {
-            state.trendPattern.process(allPivotZones)
-        }
-
-        let allTrendPatterns = state.trendPattern.getPatterns()
-        let oldTrendPatternN = state.lastCommittedTrendPatternN
-        let newTrendPatterns = ArrayList<AlgoTrendPattern>()
-        for (i in oldTrendPatternN .. allTrendPatterns.size) {
-            newTrendPatterns.add(allTrendPatterns[i])
-        }
-
-        // 12. 背驰判定
-        if (newStrokes.size > 0 || newPivotZones.size > 0) {
-            state.divergence.process(state.symbol, allStrokes, allPivotZones, allTrendPatterns)
-        }
-
-        let allDivergences = state.divergence.getDivergences()
-        let oldDivergenceN = state.lastCommittedDivergenceN
-        let newDivergences = ArrayList<AlgoDivergence>()
-        for (i in oldDivergenceN .. allDivergences.size) {
-            newDivergences.add(allDivergences[i])
-        }
-
-        // 13. 走势结束判定：背驰出现 → 标记当前走势为已完成
-        if (newDivergences.size > 0 && allTrendPatterns.size > 0) {
-            let lastTP = allTrendPatterns[allTrendPatterns.size - 1]
+        // ── Step 8: 走势结束判定（背驰→标记完成） ──
+        if (newDivergences.size > 0 && newTrendPatterns.size > 0) {
+            let lastTP = newTrendPatterns[newTrendPatterns.size - 1]
             if (!lastTP.completed) {
                 for (d in newDivergences) {
-                    if (d.confirmed) {
-                        let isMatch = (d.divergenceType == "bottomDivergence" && lastTP.direction == ChanDirection.Down) ||
-                                      (d.divergenceType == "topDivergence" && lastTP.direction == ChanDirection.Up)
-                        if (isMatch) {
-                            state.trendPattern.markLastCompleted("divergence")
-                            // 重新获取
-                            // allTrendPatterns = state.trendPattern.getPatterns()
-                            break
-                        }
-                    }
+                    let m = (d.divergenceType == "bottomDivergence" && lastTP.direction == ChanDirection.Down) ||
+                            (d.divergenceType == "topDivergence" && lastTP.direction == ChanDirection.Up)
+                    if (m) { state.trendPattern.markLastCompleted("divergence"); break }
                 }
             }
         }
 
-        // 14. 更新提交水位
-        state.lastCommittedElementN = elements.size
-        state.lastCommittedFractalN = allFractals.size
-        state.lastCommittedStrokeN = allStrokes.size
-        state.lastCommittedSegN = allSegments.size
-        state.lastCommittedPivotZoneN = allPivotZones.size
-        state.lastCommittedTrendPatternN = allTrendPatterns.size
-        state.lastCommittedDivergenceN = allDivergences.size
+        // 清理 contain 尾部
+        state.contain.trim()
 
-        let hasChange = newElements.size > 0 || newFractals.size > 0 ||
-                        newStrokes.size > 0 || newSegments.size > 0 ||
-                        newPivotZones.size > 0 || newTrendPatterns.size > 0 ||
-                        newDivergences.size > 0
+        // 检查完成趋势——用于级别升级
+        // 注意：走势类型处理器可能在本轮标记完成了之前的未完成走势
+        // 需要从 state.trendPattern 中检查最新走势是否已完成
+        let allPatterns = state.trendPattern.getPatterns()
+        if (allPatterns.size > 0) {
+            let last = allPatterns[allPatterns.size - 1]
+            if (last.completed) {
+                hasCompletedTrend = true
+                trendDir = last.direction
+                if (last.zones.size > 0) {
+                    trendHigh = last.zones[0].zg
+                    trendLow = last.zones[0].zd
+                }
+            }
+        }
 
-        PipelineOutput(state.symbol,
-            newElements, newFractals,
-            elements, allFractals,
-            allStrokes, newStrokes,
-            allSegments, newSegments,
-            allPivotZones, newPivotZones,
-            allTrendPatterns, newTrendPatterns,
-            allDivergences, newDivergences,
-            state.totalKlines, state.lastOpenTime, hasChange)
+        ProcessResult(symbol, hasCompletedTrend, trendDir, trendHigh, trendLow, hasChange)
+    }
+
+    public func trimMemory(symbol: String): Unit {
+        match (symbols.get(symbol)) { case Some(s) => s.contain.trim() case None => () }
     }
 }

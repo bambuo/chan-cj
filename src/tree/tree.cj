@@ -45,7 +45,7 @@ public class Tree {
     /// 提交新版本
     public func commit(symbol: String, level: Level, state: LevelStructure, diff: VersionDiff): String {
         versionCounter++
-        let levelStr = levelToStr(level)
+        let levelStr = "${level}"
         let versionId = "${symbol}_${levelStr}_v${versionCounter}"
 
         // 获取该 symbol 该级别的版本列表
@@ -65,7 +65,7 @@ public class Tree {
         let symbolStore = store.get(symbol)
         match (symbolStore) {
             case Some(sMap) =>
-                let levelStr = levelToStr(level)
+                let levelStr = "${level}"
                 let levelVersions = sMap.get(levelStr)
                 match (levelVersions) {
                     case Some(versions) =>
@@ -101,17 +101,6 @@ public class Tree {
     /// 获取当前最新结构（只读）
     public func getCurrentState(symbol: String, level: Level): ?LevelStructure {
         getLatestStructure(symbol, level)
-    }
-
-    /// 级别转字符串
-    public func levelToStr(level: Level): String {
-        match (level) {
-            case Level.L0 => "L0"
-            case Level.L1 => "L1"
-            case Level.L2 => "L2"
-            case Level.L3 => "L3"
-            case Level.L4 => "L4"
-        }
     }
 
     // ── 内部 ──

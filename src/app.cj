@@ -11,39 +11,34 @@ import trade.levelz.*
 import trade.engine.*
 import trade.store.*
 import trade.io.*
+import trade.log.*
+import redis.client.*
+
+let appLog = logger("App")
 
 // ──────────────────────────────────────────────
 // App 主控器
 //
 // 组装所有 M0-M10 模块，管理生命周期
-// 事件订阅编排：Kline → Pipeline → Structure → Signal → Resonance → Snapshot
+// 事件订阅编排：Kline → LevelRunner L1 → (自动链式升级)
 // ──────────────────────────────────────────────
 
 public class App {
     private let config: Config
     private let bus: GenericBus
 
-    // M3 结构树
-    private let tree: Tree
-    // M4 级别运行器
-    private let l1Runner: LevelRunner
-    // M5 信号引擎
-    private let signalEngine: SignalEngine
-    // M6 共振引擎
-    private let resonanceEngine: ResonanceEngine
-    // M7 状态存储
-    private let stateStore: StateStore
-    // M0 快照管理器
-    private let snapshotManager: SnapshotManager
-    // M1 数据源
-    private let dataSource: DataSource
-    // M8 API 服务
-    private let apiGateway: ApiGateway
-    // M2→M3 桥接
-    private let bridge: M3Bridge
+    // M4 级别运行器（只持有 L1，L2+ 按需创建）
+    private let l1: LevelRunner
 
-    // 级别构建器
-    private let levelBuilder: LevelBuilder
+    // 其他模块
+    private let tree: Tree
+    private let signalEngine: SignalEngine
+    private let resonanceEngine: ResonanceEngine
+    private let stateStore: StateStore
+    private let snapshotManager: SnapshotManager
+    private let resultStore: ResultStore
+    private let dataSource: DataSource
+    private let apiGateway: ApiGateway
 
     public init(config: Config) {
         this.config = config
@@ -64,19 +59,29 @@ public class App {
         // M5 信号引擎
         this.signalEngine = SignalEngine(bus)
 
-        // M2 管线 + 桥接
-        let pipeline = Pipeline(PivotZoneMode.Stroke)
-        this.bridge = M3Bridge(pipeline, bus)
-        this.bridge.withSignalSink(signalEngine)
+        // 结果持久化
+        var rsClient: ?RedisClient = None
+        try {
+            rsClient = Some(RedisClient(config.redisAddr, UInt16(config.redisPort), autoHello: false))
+        } catch (e: Exception) {
+            appLog.warn("ResultStore: Redis 不可用，结果不持久化: ${e}")
+        }
+        this.resultStore = match (rsClient) {
+            case Some(c) => ResultStore(c)
+            case None => ResultStore.newDisabled()
+        }
 
-        // M4 级别运行器
-        this.l1Runner = LevelRunner(Level.L1, bus)
+        // M4 级别运行器 L1（L2+ 按需创建）
+        // 每个 symbol 一个 LevelRunner，这里简化：取第一个 symbol
+        let primarySymbol = if (config.symbols.size > 0) {
+            config.symbols[0]
+        } else {
+            "BTCUSDT"
+        }
+        this.l1 = LevelRunner(1, primarySymbol, resultStore)
 
         // M6 共振引擎
         this.resonanceEngine = ResonanceEngine(bus, tree)
-
-        // M4 级别构建器
-        this.levelBuilder = LevelBuilder(bus, tree)
 
         // M1 数据源
         this.dataSource = DataSource(bus, config.redisAddr, UInt16(config.redisPort),
@@ -87,6 +92,9 @@ public class App {
 
         // ── 事件订阅 ──
         setupEventSubscriptions()
+
+        // ── 启动 L1 协程（所有成员已初始化） ──
+        spawn { l1.run() }
     }
 
     /// 启动系统
@@ -103,48 +111,35 @@ public class App {
         let apiData = HashMap<String, Any>()
         apiGateway.start(apiData)
 
-        println("[App] System initialized. Press Ctrl+C to stop.")
-        println("[App] Monitoring: ${config.symbols}")
+        appLog.info("System initialized. Press Ctrl+C to stop.")
+        appLog.info("Monitoring: ${config.symbols}")
 
-        // 主循环 — 定期输出心跳
-        var tick: Int64 = 0
+        // 主循环 — 保持进程存活
         while (true) {
-            sleep(Duration.second * 10)
-            tick++
-            println("[App] Heartbeat #${tick} — system running")
+            sleep(Duration.second * 60)
         }
     }
 
     /// 停止系统
     public func shutdown(): Unit {
-        println("[App] Shutting down...")
+        appLog.info("Shutting down...")
         dataSource.stop()
         apiGateway.stop()
+        l1.stop()
         resonanceEngine.stop()
-        println("[App] System stopped.")
+        appLog.info("System stopped.")
     }
 
     // ── 事件订阅 ──
 
     private func setupEventSubscriptions(): Unit {
-        // K 线到达 → L1 级别运行器 → M2→M3 桥接
+        // K 线到达 → 投递到 L1 输入队列（非阻塞）
         bus.subscribe(EventType.KlineReceived, { e =>
             let klineOpt = e.data as Kline
             match (klineOpt) {
                 case Some(kline) =>
-                    // 通过桥接器处理
-                    let (changed, symbol) = bridge.onKline(kline)
-
-                    // 喂入 L1 运行器
-                    l1Runner.processKline(kline)
-
-                    // 处理级别递归
-                    if (changed) {
-                        levelBuilder.processLevelRecursive(symbol)
-                    }
-
-                    // 打印当前状态
-                    println("[App] Processed ${symbol} kline: open=${kline.open} high=${kline.high} low=${kline.low} close=${kline.close}")
+                    l1.enqueue(kline)
+                    appLog.info("Enqueued ${kline.symbol} kline: open=${kline.open} high=${kline.high} low=${kline.low} close=${kline.close}")
                 case None => ()
             }
         })
@@ -158,7 +153,7 @@ public class App {
                         case FractalType.Top => "顶分型"
                         case FractalType.Bottom => "底分型"
                     }
-                    println("[Fractal] ${typeStr} idx=${f.index} t=${f.kline.time} H:${f.kline.high} L:${f.kline.low}")
+                    appLog.info("${typeStr} idx=${f.index} t=${f.kline.time} H:${f.kline.high} L:${f.kline.low}")
                 case None => ()
             }
         })
@@ -168,7 +163,7 @@ public class App {
             let signalOpt = e.data as Signal
             match (signalOpt) {
                 case Some(signal) =>
-                    println("[Signal] ${signal.description} @ ${signal.price} strength=${signal.strength}")
+                    appLog.info("${signal.description} @ ${signal.price} strength=${signal.strength}")
                     stateStore.addSignal(signal)
                     // 触发共振检查
                     resonanceEngine.onSignalCreated(signal)
@@ -181,15 +176,14 @@ public class App {
             let resonanceOpt = e.data as Resonance
             match (resonanceOpt) {
                 case Some(r) =>
-                    println("[Resonance] Signal ${r.signalId} boosted ${r.confidenceBoost}")
+                    appLog.info("Signal ${r.signalId} boosted ${r.confidenceBoost}")
                 case None => ()
             }
         })
 
         // 结构变更 → 触发快照
         bus.subscribe(EventType.StructureCommitted, { e =>
-            println("[Tree] Structure version updated")
-            // 简化的快照触发
+            appLog.info("Structure version updated")
             let snapshot = Snapshot("", "", ArrayList<Signal>(), None)
             snapshotManager.save("all", snapshot)
         })
@@ -198,7 +192,7 @@ public class App {
         bus.subscribe(EventType.LevelRecast, { e =>
             let msgOpt = e.data as String
             match (msgOpt) {
-                case Some(msg) => println("[Level] Recast: ${msg}")
+                case Some(msg) => appLog.info("Recast: ${msg}")
                 case None => ()
             }
         })
@@ -207,7 +201,7 @@ public class App {
         bus.subscribe(EventType.ErrorEvent, { e =>
             let msgOpt = e.data as String
             match (msgOpt) {
-                case Some(msg) => println("[Error] ${msg}")
+                case Some(msg) => appLog.error("${msg}")
                 case None => ()
             }
         })

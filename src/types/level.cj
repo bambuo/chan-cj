@@ -3,20 +3,37 @@ package trade.types
 import std.deriving.*
 
 // ──────────────────────────────────────────────
-// 级别枚举
+// 缠论级别 — 由整数深度表示，不预设上限
+// 深度 1 = L1, 深度 2 = L2, ...
+// 由数据驱动自然生长，非人工设定
 // ──────────────────────────────────────────────
 
 /// 缠论级别
-/// L0 = 原始 K 线
-/// L1 = 基础缠论分析（分型 → 笔 → 线段 → 中枢 → 走势类型）
-/// L2 = L1 完成的走势类型 → 高级笔
-/// L3 = L2 完成的走势类型 → 更高级笔
-/// L4 = 最高级别
-@Derive[Hashable]
-public enum Level {
-    | L0
-    | L1
-    | L2
-    | L3
-    | L4
+@Derive[ToString]
+public struct Level {
+    public let depth: Int64
+
+    public init(depth: Int64) {
+        this.depth = depth
+    }
+
+    /// 标签，用于 Redis key 构造："L1", "L2", ...
+    public func label(): String {
+        "L${depth}"
+    }
+
+    /// 下一级
+    public func next(): Level {
+        Level(depth + 1)
+    }
+
+    /// 上一级
+    public func prev(): Level {
+        if (depth > 1) { Level(depth - 1) } else { this }
+    }
+
+    /// 是否是初始级别
+    public func isBase(): Bool {
+        depth == 1
+    }
 }

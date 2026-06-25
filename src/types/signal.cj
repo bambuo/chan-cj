@@ -82,16 +82,18 @@ public struct Resonance {
 public struct SignalInput {
     public let symbol: String
     public let level: Level
+    public let price: Float64         // 当前价格（用于买卖点定价）
     public let hasDivergence: Bool
     public let divergenceType: String  // "topDivergence" / "bottomDivergence"
     public let trendDirection: String  // "Up" / "Down"
     public let hasCompletedPivot: Bool
 
-    public init(symbol: String, level: Level,
+    public init(symbol: String, level: Level, price: Float64,
                 hasDivergence: Bool, divergenceType: String,
                 trendDirection: String, hasCompletedPivot: Bool) {
         this.symbol = symbol
         this.level = level
+        this.price = price
         this.hasDivergence = hasDivergence
         this.divergenceType = divergenceType
         this.trendDirection = trendDirection

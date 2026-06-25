@@ -41,7 +41,7 @@ public class ResonanceEngine {
 
     private func checkCrossLevel(signal: Signal): Unit {
         // 简化的跨级别检查：查看高低级别的结构方向
-        let higherLevel = tree.getLatestStructure(signal.symbol, Level.L2)
+        let higherLevel = tree.getLatestStructure(signal.symbol, Level(2))
         match (higherLevel) {
             case Some(ls) =>
                 if (ls.trendPatterns.size > 0) {

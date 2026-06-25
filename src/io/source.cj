@@ -6,6 +6,9 @@ import std.convert.*
 import redis.client.*
 import trade.types.*
 import trade.bus.*
+import trade.log.*
+
+let srcLog = logger("Source")
 
 // ──────────────────────────────────────────────
 // M1 数据源 — Redis Stream 消费
@@ -42,7 +45,7 @@ public class DataSource {
     public func start(): Unit {
         if (running) { return }
         running = true
-        println("[Source] Data source starting for ${symbols}...")
+        srcLog.info("Data source starting for ${symbols}...")
 
         let h = host
         let p = port
@@ -64,7 +67,7 @@ public class DataSource {
             case Some(f) => sleep(Duration.second * 2)
             case None => ()
         }
-        println("[Source] Data source stopped")
+        srcLog.info("Data source stopped")
     }
 
     // ── 内部 ──
@@ -75,23 +78,23 @@ public class DataSource {
         // 连接 Redis
         var client: RedisClient
         try {
-            client = RedisClient(host, port)
+            client = RedisClient(host, port, autoHello: false)
         } catch (e: Exception) {
-            println("[Source] Redis connect failed: ${e}, retry in 5s...")
+            srcLog.warn("Redis connect failed: ${e}, retry in 5s...")
             sleep(Duration.second * 5)
             consumeLoop(host, port, prefix, group, syms, busRef)
             return
         }
-        println("[Source] Connected to Redis ${host}:${port}")
+        srcLog.info("Connected to Redis ${host}:${port}")
 
         // 为每个 symbol 创建 Consumer Group
         for (sym in syms) {
             let streamKey = "${prefix}:${sym}"
             try {
                 client.xgroupCreate(streamKey, group, id: "0", mkstream: true)
-                println("[Source] Created group '${group}' on ${streamKey}")
+                srcLog.info("Created group '${group}' on ${streamKey}")
             } catch (_) {
-                println("[Source] Using existing group '${group}' on ${streamKey}")
+                srcLog.info("Using existing group '${group}' on ${streamKey}")
             }
         }
 
@@ -121,14 +124,14 @@ public class DataSource {
                 if (running) { sleep(Duration.millisecond * 100) }
             } catch (e: Exception) {
                 if (running) {
-                    println("[Source] Read error: ${e}")
+                    srcLog.warn("Read error: ${e}")
                     sleep(Duration.second * 1)
                 }
             }
         }
 
         try { client.close() } catch (_) { }
-        println("[Source] Consumer loop ended")
+        srcLog.info("Consumer loop ended")
     }
 
     private func processFields(fields: Array<(String, Blob)>, streamKey: String,
@@ -180,9 +183,9 @@ public class DataSource {
             try {
                 client.xack(streamKey, group, [entryId])
             } catch (_) { }
-            println("[Source] Processed ${symbol} kline: O=${open} H=${high} L=${low} C=${close}")
+            srcLog.info("Processed ${symbol} kline: O=${open} H=${high} L=${low} C=${close}")
         } else {
-            println("[Source] Invalid kline data for ${streamKey}")
+            srcLog.warn("Invalid kline data for ${streamKey}")
         }
     }
 }

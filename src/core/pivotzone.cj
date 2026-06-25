@@ -3,131 +3,31 @@ package trade.core
 import std.collection.*
 import trade.types.*
 
-// ──────────────────────────────────────────────
-// 中枢识别（M2 管线第五级）
-//
-// 连续三段重叠 → ZG(高点中最小) / ZD(低点中最大)
-// 延伸 → 依次检查后续段是否与中枢区间有交集
-// 完成 → 第三类买卖点确认
-// ──────────────────────────────────────────────
-
-/// 中枢（算法内部表示）
-public class AlgoPivotZone {
-    public let zg: Float64
-    public let zd: Float64
-    public let startIndex: Int64
-    public var endIndex: Int64
-    public let direction: ChanDirection
-    public var completed: Bool
-
-    public init(zg: Float64, zd: Float64, startIndex: Int64, endIndex: Int64,
-                direction: ChanDirection, completed: Bool) {
-        this.zg = zg
-        this.zd = zd
-        this.startIndex = startIndex
-        this.endIndex = endIndex
-        this.direction = direction
-        this.completed = completed
-    }
-}
+// 中枢识别（流式）
 
 public class PivotZoneProcessor {
     private let zones: ArrayList<AlgoPivotZone>
-    private var mode: PivotZoneMode
 
-    public init(mode: PivotZoneMode) {
-        this.zones = ArrayList<AlgoPivotZone>()
-        this.mode = mode
-    }
+    public init(mode: PivotZoneMode) { this.zones = ArrayList<AlgoPivotZone>() }
 
-    /// 基于笔序列处理
-    public func process(strokes: ArrayList<AlgoStroke>): Unit {
-        scanZones(strokes)
-    }
-
-    /// 获取所有中枢
-    public func getZones(): ArrayList<AlgoPivotZone> {
-        let copy = ArrayList<AlgoPivotZone>()
-        for (z in zones) { copy.add(z) }
-        copy
-    }
-
-    /// 重置
-    public func reset(): Unit {
-        zones.clear()
-    }
-
-    // ── 内部 ──
-
-    private func scanZones(strokes: ArrayList<AlgoStroke>): Unit {
-        let count = strokes.size
-        var i = if (zones.size > 0) { zones[zones.size - 1].endIndex + 1 } else { 0 }
-
-        while (i < count - 2) {
-            let s1 = strokes[i]
-            let s2 = strokes[i + 1]
-            let s3 = strokes[i + 2]
-
-            // 计算 ZG（高点中的最小者）和 ZD（低点中的最大者）
-            let highs = [s1.high, s2.high, s3.high]
-            let lows = [s1.low, s2.low, s3.low]
-            let zg = minOf(highs)
-            let zd = maxOf(lows)
-
+    public func process(newStrokes: ArrayList<AlgoStroke>): ArrayList<AlgoPivotZone> {
+        let result = ArrayList<AlgoPivotZone>()
+        if (newStrokes.size < 3) { return result }
+        for (i in 0 .. newStrokes.size - 2) {
+            let (s1, s2, s3) = (newStrokes[i], newStrokes[i + 1], newStrokes[i + 2])
+            let zg = if (s1.high < s2.high) { if (s1.high < s3.high) { s1.high } else { s3.high } } else { if (s2.high < s3.high) { s2.high } else { s3.high } }
+            let zd = if (s1.low > s2.low) { if (s1.low > s3.low) { s1.low } else { s3.low } } else { if (s2.low > s3.low) { s2.low } else { s3.low } }
             if (zg > zd) {
-                // 存在有效重叠 → 形成中枢
-                let zone = AlgoPivotZone(zg, zd, i, i + 2, s2.direction, false)
-                zones.add(zone)
-
-                // 延伸检查
-                extendZone(zone, strokes, i + 3)
-                i = zone.endIndex + 1
-            } else {
-                i++
+                let z = AlgoPivotZone(zg, zd, i, i + 2, s2.direction, false)
+                var ei = i + 3
+                while (ei < newStrokes.size && newStrokes[ei].high >= zd && newStrokes[ei].low <= zg) { z.endIndex = ei; ei++ }
+                if (ei + 1 < newStrokes.size) { let r = newStrokes[ei + 1]; if (!(r.high >= zd && r.low <= zg)) { z.completed = true } }
+                zones.add(z); result.add(z); break
             }
         }
+        result
     }
 
-    private func extendZone(zone: AlgoPivotZone, strokes: ArrayList<AlgoStroke>, startFrom: Int64): Unit {
-        var i = startFrom
-        while (i < strokes.size) {
-            let s = strokes[i]
-            // 检查是否与中枢区间有交集
-            let hasOverlap = s.high >= zone.zd && s.low <= zone.zg
-            if (hasOverlap) {
-                // 中枢延伸
-                zone.endIndex = i
-                i++
-            } else {
-                // 脱离中枢 — 检查第三类买卖点
-                let isThirdTypeSell = s.high < zone.zd  // 向下脱离
-                let isThirdTypeBuy = s.low > zone.zg    // 向上脱离
-
-                if (isThirdTypeSell || isThirdTypeBuy) {
-                    // 检查回抽段
-                    if (i + 1 < strokes.size) {
-                        let retrace = strokes[i + 1]
-                        let retraceOverlap = retrace.high >= zone.zd && retrace.low <= zone.zg
-                        if (!retraceOverlap) {
-                            // 回抽未回到中枢 → 第三类买卖点确认完成
-                            zone.completed = true
-                        }
-                    }
-                }
-                return
-            }
-        }
-    }
-
-    private func minOf(values: Array<Float64>): Float64 {
-        var m = values[0]
-        for (v in values) { if (v < m) { m = v } }
-        m
-    }
-
-    private func maxOf(values: Array<Float64>): Float64 {
-        var m = values[0]
-        for (v in values) { if (v > m) { m = v } }
-        m
-    }
+    public func getZones(): ArrayList<AlgoPivotZone> { let c = ArrayList<AlgoPivotZone>(); for (z in zones) { c.add(z) }; c }
+    public func reset(): Unit { zones.clear() }
 }

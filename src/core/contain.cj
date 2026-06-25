@@ -4,89 +4,97 @@ import std.collection.*
 import trade.types.*
 
 // ──────────────────────────────────────────────
-// 包含处理（M2 管线第一级）
-//
-// 使用运算符重载后的 ChanKline：
-//   包含判定 → a >= b || b >= a
-//   方向判定 → curr > prev → Up,  curr < prev → Down
-//   向上合并 → a + b
-//   向下合并 → a - b
+// 包含处理（流式）
+// 维护末尾最少元素用于下次包含判定
 // ──────────────────────────────────────────────
 
+/// 带全局索引的合并元素
+private struct IndexedKline {
+    let kline: ChanKline
+    let index: Int64
+
+    public init(kline: ChanKline, index: Int64) {
+        this.kline = kline
+        this.index = index
+    }
+}
+
 public class ContainProcessor {
-    private let elements: ArrayList<ChanKline>
+    private let tail: ArrayList<IndexedKline>
     private var trend: ChanTrend
+    private var counter: Int64
 
     public init() {
-        this.elements = ArrayList<ChanKline>()
+        this.tail = ArrayList<IndexedKline>()
         this.trend = ChanTrend.Up
+        this.counter = 0
     }
 
-    /// 处理一根原始 K 线，返回是否产生了新的非包含元素
-    public func process(kline: Kline): Bool {
-        let ck = ChanKline(kline.openTime, kline.high, kline.low)
-        let oldSize = elements.size
-
-        elements.add(ck)
+    public func process(kline: Kline): ?ChanKline {
+        let idx = counter; counter++
+        tail.add(IndexedKline(ChanKline(kline.openTime, kline.high, kline.low), idx))
         resolveContainment()
-
-        elements.size != oldSize
+        if (tail.size > 0) { Some(tail[tail.size - 1].kline) } else { None }
     }
 
-    /// 获取当前所有非包含元素（只读快照）
-    public func getElements(): ArrayList<ChanKline> {
-        let copy = ArrayList<ChanKline>()
-        for (e in elements) { copy.add(e) }
-        copy
+    /// 获取最后 N 个元素及其在全局序列中的起始偏移
+    public func getLastWithOffset(n: Int64): (ArrayList<ChanKline>, Int64) {
+        let result = ArrayList<ChanKline>()
+        let start = if (tail.size > n) { tail.size - n } else { 0 }
+        let offset = if (tail.size > 0) { tail[start].index } else { 0 }
+        for (i in start .. tail.size) { result.add(tail[i].kline) }
+        (result, offset)
     }
 
-    /// 获取当前趋势方向
-    public func getTrend(): ChanTrend { trend }
+    /// 获取最后 N 个元素（不含索引，兼容旧调用）
+    public func getLast(n: Int64): ArrayList<ChanKline> {
+        let (r, _) = getLastWithOffset(n)
+        r
+    }
 
-    /// 重置状态
+    public func getLatest(): ?ChanKline {
+        if (tail.size > 0) { Some(tail[tail.size - 1].kline) } else { None }
+    }
+
+    public func trim(): Unit {
+        if (tail.size > 3) {
+            let keep = ArrayList<IndexedKline>()
+            for (i in tail.size - 3 .. tail.size) { keep.add(tail[i]) }
+            tail.clear()
+            for (e in keep) { tail.add(e) }
+        }
+    }
+
     public func reset(): Unit {
-        elements.clear()
+        tail.clear()
         trend = ChanTrend.Up
     }
 
-    // ── 内部：循环包含处理 ──
-
     private func resolveContainment(): Unit {
         var done = false
-        while (!done && elements.size >= 2) {
-            let lastIdx = elements.size - 1
-            let a = elements[lastIdx - 1]
-            let b = elements[lastIdx]
-
-            // 运算符重载版包含判定：a >= b || b >= a
-            if (!(a >= b || b >= a)) {
-                done = true
-            } else {
-                // 更新方向
-                trend = determineTrend(lastIdx - 1)
-
-                // 运算符重载版合并
+        while (!done && tail.size >= 2) {
+            let a = tail[tail.size - 2].kline
+            let b = tail[tail.size - 1].kline
+            if (!(a >= b || b >= a)) { done = true } else {
+                trend = determineTrend(tail.size - 2)
                 let merged = match (trend) {
-                    case ChanTrend.Up => a + b   // 向上合并：取高点更高、低点更高
-                    case ChanTrend.Down => a - b // 向下合并：取高点更低、低点更低
+                    case ChanTrend.Up => a + b
+                    case ChanTrend.Down => a - b
                 }
-
-                elements.remove(at: lastIdx)
-                elements.remove(at: lastIdx - 1)
-                elements.add(merged)
+                // 合并后保留较早的索引
+                let mergedIdx = tail[tail.size - 2].index
+                tail.remove(at: tail.size - 1)
+                tail.remove(at: tail.size - 1)
+                tail.add(IndexedKline(merged, mergedIdx))
             }
         }
     }
 
-    /// 以最后两个元素为基准判定方向（缠论 AND 条件）
     private func determineTrend(idx: Int64): ChanTrend {
-        if (idx > 0) {
-            let prev = elements[idx - 1]
-            let curr = elements[idx]
-
-            // 运算符重载版方向判定
-            if (curr > prev) { return ChanTrend.Up }     // 高点更高 且 低点更高
-            if (curr < prev) { return ChanTrend.Down }    // 高点更低 且 低点更低
+        if (idx > 0 && idx < tail.size) {
+            let prev = tail[idx - 1].kline; let curr = tail[idx].kline
+            if (curr > prev) { return ChanTrend.Up }
+            if (curr < prev) { return ChanTrend.Down }
         }
         ChanTrend.Up
     }

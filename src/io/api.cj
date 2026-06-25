@@ -2,6 +2,9 @@ package trade.io
 
 import std.collection.*
 import trade.types.*
+import trade.log.*
+
+let apiLog = logger("API")
 
 // ──────────────────────────────────────────────
 // M8 HTTP API 服务
@@ -27,12 +30,12 @@ public class ApiGateway {
         if (running) { return }
         running = true
 
-        println("[API] HTTP API starting on ${httpAddr}:${httpPort}")
-        println("[API] Endpoints:")
-        println("[API]   GET /health         — 健康检查")
-        println("[API]   GET /signals        — 查询信号列表")
-        println("[API]   GET /structure      — 查询结构树")
-        println("[API]   GET /levels         — 查询级别信息")
+        apiLog.info("HTTP API starting on ${httpAddr}:${httpPort}")
+        apiLog.info("Endpoints:")
+        apiLog.info("  GET /health         — 健康检查")
+        apiLog.info("  GET /signals        — 查询信号列表")
+        apiLog.info("  GET /structure      — 查询结构树")
+        apiLog.info("  GET /levels         — 查询级别信息")
 
         // 后台线程保持 API 服务存活（未来替换为 stdx.net.http 真服务）
         spawn { =>
@@ -45,6 +48,6 @@ public class ApiGateway {
     /// 停止 HTTP 服务
     public func stop(): Unit {
         running = false
-        println("[API] HTTP API stopped")
+        apiLog.info("HTTP API stopped")
     }
 }

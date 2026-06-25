@@ -73,7 +73,7 @@ public class SignalEngine <: SignalSink {
         }
 
         signalCounter++
-        let signal = createSignal(input.symbol, signalType, 0.0, input.level, 0.8)
+        let signal = createSignal(input.symbol, signalType, input.price, input.level, 0.8)
         signals.add(signal)
         bus.publish(Event(EventType.SignalCreated, signal))
     }
@@ -87,7 +87,7 @@ public class SignalEngine <: SignalSink {
             case "Down" => SignalType.Sell2
             case _ => return
         }
-        let signal = createSignal(input.symbol, signalType, 0.0, input.level, 0.6)
+        let signal = createSignal(input.symbol, signalType, input.price, input.level, 0.6)
         signals.add(signal)
         bus.publish(Event(EventType.SignalCreated, signal))
     }
@@ -103,7 +103,7 @@ public class SignalEngine <: SignalSink {
             case "Down" => SignalType.Sell3
             case _ => return
         }
-        let signal = createSignal(input.symbol, signalType, 0.0, input.level, 0.7)
+        let signal = createSignal(input.symbol, signalType, input.price, input.level, 0.7)
         signals.add(signal)
         bus.publish(Event(EventType.SignalCreated, signal))
     }
@@ -131,6 +131,6 @@ public class SignalEngine <: SignalSink {
             case SignalType.Sell3 => "Sell3"
         }
         Signal("sig_${signalCounter}", symbol, signalType, SignalState.Confirmed,
-               price, 0, level, strength, typeName)
+               price, 0, level, strength, "${typeName}(${level})")
     }
 }
