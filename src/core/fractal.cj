@@ -23,12 +23,13 @@ private struct FractalKey {
 }
 
 public class FractalProcessor {
+    // seen 用于防重复：包含合并可能导致同一位置被重评估
+    // 包含窗口=3，合并仅影响尾部，最多1个已检查位置回溯
+    // 每个位置至多2种分型（顶+底），故4即可覆盖
     private let seen: RingBuffer<FractalKey>
 
     public init() {
-        // RingBuffer 容量 = 存储最近 1000 个分型用于去重
-        // 超出自动淘汰最旧，无需手动 trim
-        this.seen = RingBuffer<FractalKey>(1000)
+        this.seen = RingBuffer<FractalKey>(4)
     }
 
     /// 扫描最后三个元素，返回新发现的分型（使用偏移修正绝对索引）

@@ -13,7 +13,8 @@ public class StrokeProcessor {
     private let strokes: RingBuffer<AlgoStroke>     // 最多 1 根：最后确认笔
     private var lastEndpoint: ?ChanKline
     private var lastEndpointType: ?FractalType
-    private let candidates: ArrayList<(ChanKline, Int64, FractalType)>
+    // 候选分型端点 FIFO，容量推导：严格模式 span≥4，最多累积5个即成笔，设6留余量
+    private let candidates: RingBuffer<(ChanKline, Int64, FractalType)>
     private let replacedEndpoints: ArrayList<(ChanKline, Int64, FractalType)>
     // 待输出的新笔（每次 process() 后清空）
     private let pendingOutput: ArrayList<AlgoStroke>
@@ -25,7 +26,7 @@ public class StrokeProcessor {
         this.strokes = RingBuffer<AlgoStroke>(1)   // 固定容量 1，自动淘汰
         this.lastEndpoint = None
         this.lastEndpointType = None
-        this.candidates = ArrayList<(ChanKline, Int64, FractalType)>()
+        this.candidates = RingBuffer<(ChanKline, Int64, FractalType)>(6)
         this.replacedEndpoints = ArrayList<(ChanKline, Int64, FractalType)>()
         this.pendingOutput = ArrayList<AlgoStroke>()
         this.lastReturnedId = -1
@@ -80,7 +81,8 @@ public class StrokeProcessor {
     }
 
     private func tryFirstStroke(fractal: Fractal): Unit {
-        for (c in candidates) {
+        let allCandidates = candidates.toArrayList()
+        for (c in allCandidates) {
             let (ck, idx, ftype) = c
             if (ftype != fractal.ftype && canFormStroke(ck, fractal.kline, idx, fractal.index)) {
                 createStroke(ck, fractal.kline, idx, fractal.index, ftype, false)

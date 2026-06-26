@@ -21,7 +21,11 @@ public class SegmentProcessor {
     private var segmentEndTime: Int64                  // 当前线段的最新结束时间
     private var segmentStartPrice: Float64             // 当前线段的起始价格
     private var segmentEndPrice: Float64               // 当前线段的最新结束价格
-    private let procSeq: ArrayList<FeatureK>          // 特征序列，线段结束时清空
+    // 特征序列，线段结束时清空；使用 ArrayList 因 mergeTail 需 remove(at: size-1)
+    // 容量推导：极端行情连续反向笔不形成特征分型时持续增长
+    // 线段通常 3-7 笔，特征序列至多其一半，设 30 为安全硬上限
+    private let procSeq: ArrayList<FeatureK>
+    private let MAX_PROC_SEQ: Int64 = 30
     private var pendingIdx: Int64
     private let allStrokes: RingBuffer<AlgoStroke>    // 最近 200 笔用于 pendig 检测
     private var hasInitialized: Bool                  // 首笔方向是否已设定
@@ -70,6 +74,10 @@ public class SegmentProcessor {
 
         if (s.direction != currentDir) {
             procSeq.add(FeatureK(s.high, s.low, s.endIndex, s.direction == ChanDirection.Up))
+            if (procSeq.size > MAX_PROC_SEQ) {
+                segLog.warn("procSeq 超限(${MAX_PROC_SEQ})，丢弃最旧特征元素")
+                procSeq.remove(at: 0)
+            }
             mergeTail()
             segLog.info("procSeq -> ${procSeq.size} elements (added opposite stroke)")
         }
