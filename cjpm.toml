@@ -13,7 +13,7 @@
   package-configuration = {}
 
 [dependencies]
-redis = { git = "https://github.com/bambuo/redis-cj.git", branch = "main" }
+"redis" = "1.0.20260626"
 
 [target.x86_64-w64-mingw32]
   compile-option = "-Woff unused --diagnostic-format=noColor -Woff deprecated -lcrypt32"
