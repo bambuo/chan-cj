@@ -7,7 +7,7 @@ import trade.conf.*
 // ──────────────────────────────────────────────
 
 main(): Int64 {
-    let config = defaultConfig()
+    let config = Config.defaultConfig()
     let app = App(config)
 
     // 捕获 Ctrl+C 优雅退出
