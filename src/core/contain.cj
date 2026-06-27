@@ -44,7 +44,7 @@ public class ContainProcessor {
             tail.add(list[i])
         }
 
-        if (tail.size() > 0) {
+        if (tail.size > 0) {
             match (tail.last()) {
                 case Some(ik) => Some(ik.kline)
                 case None => None

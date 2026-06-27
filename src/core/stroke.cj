@@ -71,7 +71,7 @@ public class StrokeProcessor {
             case FractalType.Top | FractalType.Bottom => ()
             case _ => return
         }
-        if (strokes.isEmpty()) { tryFirstStroke(fractal); return }
+        if (strokes.isEmpty) { tryFirstStroke(fractal); return }
         match (lastEndpointType) {
             case Some(lastType) =>
                 if (fractal.ftype == lastType) { tryUpdateEndpoint(fractal) }
@@ -96,7 +96,7 @@ public class StrokeProcessor {
     }
 
     private func tryCreateStroke(fractal: Fractal): Unit {
-        if (strokes.isEmpty()) { tryFirstStroke(fractal); return }
+        if (strokes.isEmpty) { tryFirstStroke(fractal); return }
         match (strokes.last()) {
             case Some(last) =>
                 if (canFormStroke(last.end, fractal.kline, last.endIndex, fractal.index)) {
@@ -121,7 +121,7 @@ public class StrokeProcessor {
     }
 
     private func tryUpdateEndpoint(fractal: Fractal): Unit {
-        if (strokes.isEmpty()) { return }
+        if (strokes.isEmpty) { return }
         match (strokes.last()) {
             case Some(last) =>
                 let ok = match (last.direction) {
@@ -157,7 +157,7 @@ public class StrokeProcessor {
     // ── 虚笔 ──
 
     private func cleanupVirtual(): Unit {
-        if (strokes.isEmpty()) { return }
+        if (strokes.isEmpty) { return }
         match (strokes.last()) {
             case Some(last) =>
                 if (!last.isVirtual) { return }
@@ -198,7 +198,7 @@ public class StrokeProcessor {
     }
 
     private func updateVirtual(latestKline: ChanKline): Unit {
-        if (strokes.isEmpty()) { return }
+        if (strokes.isEmpty) { return }
         match (strokes.last()) {
             case Some(last) =>
                 let ext = match (last.direction) {
